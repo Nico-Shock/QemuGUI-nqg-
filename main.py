@@ -1,46 +1,81 @@
 #!/usr/bin/env python3
-import os
-import json
-import subprocess
-import shutil
+import os, json, subprocess, shutil, threading, urllib.parse
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, GLib
 
-# -------------------------------------------------------------------
-# Globale Konfiguration (Speicherung im Benutzerverzeichnis)
-# -------------------------------------------------------------------
+# ===== GLOBAL CONFIG =====
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".qemu_manager")
 if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR)
 INDEX_FILE = os.path.join(CONFIG_DIR, "vms_index.json")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# -------------------------------------------------------------------
-# Funktion zum Auffinden von OVMF-Dateien für UEFI/UEFI+Secure Boot
-# -------------------------------------------------------------------
-def get_ovmf_files(secure=False):
-    search_dirs = ["/usr/share/OVMF", "/usr/local/share/OVMF", BASE_DIR]
-    for d in search_dirs:
-        ovmf_code = os.path.join(d, "OVMF_CODE.fd")
-        if secure:
-            ovmf_vars = os.path.join(d, "OVMF_VARS_SECURE.fd")
-        else:
-            ovmf_vars = os.path.join(d, "OVMF_VARS.fd")
-        if os.path.exists(ovmf_code) and os.path.exists(ovmf_vars):
-            return ovmf_code, ovmf_vars
-    return None, None
+# ===== OVMF FILES FUNCTION =====
+def get_ovmf_files(secure=False, custom_dir=None):
+    dirs = []
+    if custom_dir:
+        dirs.append(custom_dir)
+    dirs.extend(["/usr/share/OVMF", "/usr/local/share/OVMF", BASE_DIR])
+    for d in dirs:
+        code = os.path.join(d, "OVMF_CODE.secboot.4m.fd" if secure else "OVMF_CODE.4m.fd")
+        vars_file = os.path.join(d, "OVMF_VARS.fd")
+        if os.path.exists(code) and os.path.exists(vars_file):
+            return code, vars_file
+    return "", ""
 
-# -------------------------------------------------------------------
-# Funktionen zum Laden und Speichern der VM-Konfigurationen
-# -------------------------------------------------------------------
+# ===== BUILD LAUNCH COMMAND =====
+def build_launch_command(config):
+    qemu = shutil.which("qemu-kvm") or shutil.which("qemu-system-x86_64")
+    if not qemu:
+        return None
+    cmd = [qemu, "-enable-kvm", "-cpu", "host",
+           "-smp", str(config["cpu"]),
+           "-m", str(config["ram"]),
+           "-drive", f"file={config['disk_image']},format={config['disk_type']},if=virtio",
+           "-boot", "menu=on",
+           "-usb", "-device", "usb-tablet",
+           "-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0"]
+    dmode = config["display"].lower()
+    if dmode.startswith("gtk") or dmode == "qxl":
+        if config.get("3d_acceleration", False):
+            cmd.extend(["-vga", "qxl", "-display", "gtk,gl=on"])
+        else:
+            cmd.extend(["-vga", "qxl", "-display", "gtk"])
+    elif dmode == "spice":
+        cmd.extend(["-vga", "qxl", "-display", "spice"])
+    if config.get("iso"):
+        # Use unquoted ISO path
+        iso_path = urllib.parse.unquote(config["iso"])
+        cmd.extend(["-cdrom", iso_path])
+    if config.get("firmware") in ["UEFI", "UEFI+Secure Boot"]:
+        if config.get("ovmf_code"):
+            cmd.extend(["-bios", config["ovmf_code"]])
+    return cmd
+
+# ===== SUDO PASSWORD PROMPT =====
+def prompt_sudo_password(parent):
+    dialog = Gtk.Dialog(title="Sudo Password Required", transient_for=parent, flags=0)
+    dialog.add_button("OK", Gtk.ResponseType.OK)
+    dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+    box = dialog.get_content_area()
+    box.add(Gtk.Label(label="Enter your sudo password:"))
+    entry = Gtk.Entry()
+    entry.set_visibility(False)
+    box.add(entry)
+    dialog.show_all()
+    response = dialog.run()
+    pwd = entry.get_text() if response == Gtk.ResponseType.OK else None
+    dialog.destroy()
+    return pwd
+
+# ===== CONFIG LOAD/SAVE =====
 def load_vm_index():
     if os.path.exists(INDEX_FILE) and os.path.getsize(INDEX_FILE) > 0:
         try:
             with open(INDEX_FILE, "r") as f:
                 return json.load(f)
-        except Exception as e:
-            print("Fehler beim Laden des Index:", e)
+        except Exception:
             return []
     return []
 
@@ -51,159 +86,131 @@ def save_vm_index(index):
 def load_all_vm_configs():
     index = load_vm_index()
     configs = []
-    for vm_dir in index:
-        config_file = os.path.join(vm_dir, "vm_config.json")
-        if os.path.exists(config_file):
-            try:
-                with open(config_file, "r") as f:
-                    config = json.load(f)
-                    configs.append(config)
-            except Exception as e:
-                print("Fehler beim Laden der VM-Konfiguration:", e)
+    for vm_path in index:
+        try:
+            for fname in os.listdir(vm_path):
+                if fname.endswith(".conf"):
+                    with open(os.path.join(vm_path, fname), "r") as f:
+                        configs.append(json.load(f))
+                    break
+        except Exception as e:
+            print("Error loading config from", vm_path, e)
     return configs
 
 def save_vm_config(config):
-    config_path = os.path.join(config["path"], "vm_config.json")
+    conf_file = os.path.join(config["path"], f"{config['name']}.conf")
     try:
-        with open(config_path, "w") as f:
+        with open(conf_file, "w") as f:
             json.dump(config, f, indent=4)
-    except Exception as e:
-        dialog = Gtk.MessageDialog(
-            message_type=Gtk.MessageType.ERROR,
-            buttons=Gtk.ButtonsType.OK,
-            text="Fehler beim Speichern der VM-Konfiguration.\nBitte prüfe die Berechtigungen."
-        )
-        dialog.run()
-        dialog.destroy()
-        raise e
+    except Exception:
+        show_error_dialog("Error saving VM configuration.\nCheck your permissions.")
+        raise
 
-# -------------------------------------------------------------------
-# Dialog zur ISO-Auswahl (Drag & Drop und Plus-Button)
-# -------------------------------------------------------------------
+# ===== ERROR DIALOG =====
+def show_error_dialog(msg):
+    d = Gtk.MessageDialog(transient_for=None, flags=0,
+                          message_type=Gtk.MessageType.ERROR,
+                          buttons=Gtk.ButtonsType.OK, text=msg)
+    d.run()
+    d.destroy()
+
+# ===== LOADING DIALOG =====
+class LoadingDialog(Gtk.Dialog):
+    def __init__(self, parent, msg="Installing OVMF firmware files..."):
+        super().__init__(title="Please wait", transient_for=parent)
+        self.set_modal(True)
+        self.set_default_size(300,100)
+        box = self.get_content_area()
+        box.add(Gtk.Label(label=msg))
+        self.progress = Gtk.ProgressBar()
+        self.progress.set_show_text(False)
+        box.add(self.progress)
+        self.show_all()
+        self.timeout_id = GLib.timeout_add(100, self.on_timeout)
+    def on_timeout(self):
+        self.progress.pulse()
+        return True
+    def destroy(self):
+        GLib.source_remove(self.timeout_id)
+        super().destroy()
+
+# ===== ISO SELECTION DIALOG =====
 class ISOSelectDialog(Gtk.Window):
     def __init__(self, parent):
-        super().__init__(title="ISO auswählen")
+        super().__init__(title="Select ISO")
         self.parent = parent
-        self.set_default_size(400, 300)
+        self.set_default_size(400,300)
+        self.set_position(Gtk.WindowPosition.CENTER)
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        vbox.set_margin_top(20)
-        vbox.set_margin_bottom(20)
-        vbox.set_margin_start(20)
-        vbox.set_margin_end(20)
-
-        # Plus-Button als visuelle Hilfe
-        plus_button = Gtk.Button(label="+")
-        plus_button.set_size_request(150, 150)
-        plus_button.connect("clicked", self.on_plus_clicked)
-        vbox.pack_start(plus_button, False, False, 0)
-
-        # Drag & Drop Fläche
-        drop_area = Gtk.EventBox()
-        drop_area.set_size_request(300, 150)
-        drop_area.override_background_color(Gtk.StateFlags.NORMAL, Gdk.RGBA(0.9, 0.9, 0.9, 1))
-        drop_area.connect("drag-data-received", self.on_drag_received)
-        drop_area.drag_dest_set(Gtk.DestDefaults.ALL, [], Gdk.DragAction.COPY)
-        target_entry = Gtk.TargetEntry.new("text/uri-list", 0, 0)
-        drop_area.drag_dest_set_target_list(Gtk.TargetList.new([target_entry]))
-        vbox.pack_start(drop_area, True, True, 0)
-
-        info_label = Gtk.Label(label="Ziehen Sie eine ISO-Datei hierher oder klicken Sie auf '+'")
-        vbox.pack_start(info_label, False, False, 0)
-
+        vbox.set_margin_top(20); vbox.set_margin_bottom(20)
+        vbox.set_margin_start(20); vbox.set_margin_end(20)
+        btn = Gtk.Button(label="+")
+        btn.set_size_request(150,150)
+        btn.connect("clicked", self.on_plus_clicked)
+        vbox.pack_start(btn, False, False, 0)
+        drop = Gtk.EventBox()
+        drop.set_size_request(300,150)
+        drop.override_background_color(Gtk.StateFlags.NORMAL, Gdk.RGBA(0.9,0.9,0.9,1))
+        drop.connect("drag-data-received", self.on_drag_received)
+        drop.drag_dest_set(Gtk.DestDefaults.ALL, [], Gdk.DragAction.COPY)
+        target = Gtk.TargetEntry.new("text/uri-list", 0, 0)
+        drop.drag_dest_set_target_list(Gtk.TargetList.new([target]))
+        vbox.pack_start(drop, True, True, 0)
+        vbox.pack_start(Gtk.Label(label="Drag and drop your ISO file here or click '+'"), False, False, 0)
         self.add(vbox)
-
-    def on_plus_clicked(self, widget):
-        dialog = Gtk.FileChooserDialog(title="Wähle ISO-Datei", parent=self,
-                                       action=Gtk.FileChooserAction.OPEN)
-        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                           Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
-        iso_filter = Gtk.FileFilter()
-        iso_filter.set_name("ISO Dateien")
-        iso_filter.add_pattern("*.iso")
-        dialog.add_filter(iso_filter)
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            iso_path = dialog.get_filename()
-            self.iso_chosen(iso_path)
-        dialog.destroy()
-
-    def on_drag_received(self, widget, drag_context, x, y, data, info, time):
+    def on_plus_clicked(self, w):
+        d = Gtk.FileChooserDialog(title="Select ISO File", parent=self,
+                                  action=Gtk.FileChooserAction.OPEN)
+        d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+        f = Gtk.FileFilter(); f.set_name("ISO files"); f.add_pattern("*.iso"); d.add_filter(f)
+        if d.run() == Gtk.ResponseType.OK:
+            self.iso_chosen(d.get_filename())
+        d.destroy()
+    def on_drag_received(self, w, dc, x, y, data, info, time):
         uris = data.get_uris()
         if uris:
-            iso_path = uris[0].replace("file://", "").strip()
-            self.iso_chosen(iso_path)
-
+            self.iso_chosen(uris[0].replace("file://", "").strip())
     def iso_chosen(self, iso_path):
         self.destroy()
-        vm_dialog = VMCreateDialog(self.parent, iso_path)
-        response = vm_dialog.run()
-        if response == Gtk.ResponseType.OK:
-            config = vm_dialog.get_vm_config()
-            self.parent.add_vm(config)
-        vm_dialog.destroy()
+        d = VMCreateDialog(self.parent, iso_path)
+        if d.run() == Gtk.ResponseType.OK:
+            self.parent.add_vm(d.get_vm_config())
+        d.destroy()
 
-# -------------------------------------------------------------------
-# Dialog zur Erstellung einer neuen VM
-# -------------------------------------------------------------------
+# ===== NEW VM DIALOG =====
 class VMCreateDialog(Gtk.Dialog):
     def __init__(self, parent, iso_path=None):
-        super().__init__(title="Neue VM Konfiguration", transient_for=parent)
-        self.set_default_size(500, 500)
+        super().__init__(title="New VM Configuration", transient_for=parent)
+        self.set_default_size(500,500)
         self.iso_path = iso_path
         box = self.get_content_area()
-
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
-        grid.set_margin_top(10)
-        grid.set_margin_bottom(10)
-        grid.set_margin_start(10)
-        grid.set_margin_end(10)
-
-        # VM Name
-        lbl_name = Gtk.Label(label="VM Name:")
+        grid.set_margin_top(10); grid.set_margin_bottom(10)
+        grid.set_margin_start(10); grid.set_margin_end(10)
+        grid.attach(Gtk.Label(label="VM Name:"), 0,0,1,1)
         self.entry_name = Gtk.Entry()
-        grid.attach(lbl_name, 0, 0, 1, 1)
-        grid.attach(self.entry_name, 1, 0, 2, 1)
-
-        # VM Verzeichnis
-        lbl_path = Gtk.Label(label="VM Pfad:")
+        grid.attach(self.entry_name, 1,0,2,1)
+        grid.attach(Gtk.Label(label="VM Directory:"), 0,1,1,1)
         self.entry_path = Gtk.Entry()
-        btn_browse = Gtk.Button(label="Durchsuchen")
-        btn_browse.connect("clicked", self.on_browse)
-        grid.attach(lbl_path, 0, 1, 1, 1)
-        grid.attach(self.entry_path, 1, 1, 1, 1)
-        grid.attach(btn_browse, 2, 1, 1, 1)
-
-        # CPU Kerne
-        lbl_cpu = Gtk.Label(label="CPU Kerne:")
-        self.spin_cpu = Gtk.SpinButton.new_with_range(1, 32, 1)
-        self.spin_cpu.set_value(2)
-        grid.attach(lbl_cpu, 0, 2, 1, 1)
-        grid.attach(self.spin_cpu, 1, 2, 2, 1)
-
-        # RAM (MiB)
-        lbl_ram = Gtk.Label(label="RAM (MiB):")
-        self.spin_ram = Gtk.SpinButton.new_with_range(256, 131072, 256)
-        self.spin_ram.set_value(4096)
-        grid.attach(lbl_ram, 0, 3, 1, 1)
-        grid.attach(self.spin_ram, 1, 3, 2, 1)
-
-        # Festplattengröße (GB)
-        lbl_disk = Gtk.Label(label="Festplattengröße (GB):")
-        self.spin_disk = Gtk.SpinButton.new_with_range(1, 128, 1)
-        self.spin_disk.set_value(40)
-        grid.attach(lbl_disk, 0, 4, 1, 1)
-        grid.attach(self.spin_disk, 1, 4, 2, 1)
-
-        # Festplattentyp
-        lbl_disk_type = Gtk.Label(label="Festplattentyp:")
-        self.radio_qcow2 = Gtk.RadioButton.new_with_label_from_widget(None, "qcow2 (Empfohlen)")
-        self.radio_raw = Gtk.RadioButton.new_with_label_from_widget(self.radio_qcow2, "raw (Vollständig)")
-        grid.attach(lbl_disk_type, 0, 5, 1, 1)
-        grid.attach(self.radio_qcow2, 1, 5, 1, 1)
-        grid.attach(self.radio_raw, 2, 5, 1, 1)
-
-        # Firmware Auswahl
-        lbl_fw = Gtk.Label(label="Firmware:")
+        btn = Gtk.Button(label="Browse")
+        btn.connect("clicked", self.on_browse)
+        grid.attach(self.entry_path, 1,1,1,1)
+        grid.attach(btn, 2,1,1,1)
+        grid.attach(Gtk.Label(label="CPU Cores:"), 0,2,1,1)
+        self.spin_cpu = Gtk.SpinButton.new_with_range(1,32,1); self.spin_cpu.set_value(2)
+        grid.attach(self.spin_cpu, 1,2,2,1)
+        grid.attach(Gtk.Label(label="RAM (MiB):"), 0,3,1,1)
+        self.spin_ram = Gtk.SpinButton.new_with_range(256,131072,256); self.spin_ram.set_value(4096)
+        grid.attach(self.spin_ram, 1,3,2,1)
+        grid.attach(Gtk.Label(label="Disk Size (GB):"), 0,4,1,1)
+        self.spin_disk = Gtk.SpinButton.new_with_range(1,128,1); self.spin_disk.set_value(40)
+        grid.attach(self.spin_disk, 1,4,2,1)
+        grid.attach(Gtk.Label(label="Disk Type:"), 0,5,1,1)
+        self.radio_qcow2 = Gtk.RadioButton.new_with_label_from_widget(None, "qcow2 (Recommended)")
+        self.radio_raw = Gtk.RadioButton.new_with_label_from_widget(self.radio_qcow2, "raw (Full)")
+        grid.attach(self.radio_qcow2, 1,5,1,1)
+        grid.attach(self.radio_raw, 2,5,1,1)
+        grid.attach(Gtk.Label(label="Firmware:"), 0,6,1,1)
         fw_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.radio_bios = Gtk.RadioButton.new_with_label_from_widget(None, "BIOS")
         self.radio_uefi = Gtk.RadioButton.new_with_label_from_widget(self.radio_bios, "UEFI")
@@ -211,40 +218,27 @@ class VMCreateDialog(Gtk.Dialog):
         fw_box.pack_start(self.radio_bios, False, False, 0)
         fw_box.pack_start(self.radio_uefi, False, False, 0)
         fw_box.pack_start(self.radio_secure, False, False, 0)
-        grid.attach(lbl_fw, 0, 6, 1, 1)
-        grid.attach(fw_box, 1, 6, 2, 1)
-
-        # Display Auswahl
-        lbl_disp = Gtk.Label(label="Display:")
+        grid.attach(fw_box, 1,6,2,1)
+        grid.attach(Gtk.Label(label="Display:"), 0,7,1,1)
         self.combo_disp = Gtk.ComboBoxText()
-        self.combo_disp.append_text("gtk (default)")
-        self.combo_disp.append_text("qxl")
-        self.combo_disp.append_text("spice")
+        for opt in ["gtk (default)", "qxl", "spice"]:
+            self.combo_disp.append_text(opt)
         self.combo_disp.set_active(0)
-        grid.attach(lbl_disp, 0, 7, 1, 1)
-        grid.attach(self.combo_disp, 1, 7, 2, 1)
-
-        # 3D Beschleunigung
-        lbl_3d = Gtk.Label(label="3D Beschleunigung:")
+        grid.attach(self.combo_disp, 1,7,2,1)
+        grid.attach(Gtk.Label(label="3D Acceleration:"), 0,8,1,1)
         self.check_3d = Gtk.CheckButton()
-        grid.attach(lbl_3d, 0, 8, 1, 1)
-        grid.attach(self.check_3d, 1, 8, 2, 1)
-
+        grid.attach(self.check_3d, 1,8,2,1)
         box.add(grid)
-        self.add_button("Abbrechen", Gtk.ResponseType.CANCEL)
-        self.add_button("Erstellen", Gtk.ResponseType.OK)
+        self.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        self.add_button("Create", Gtk.ResponseType.OK)
         self.show_all()
-
-    def on_browse(self, widget):
-        dialog = Gtk.FileChooserDialog(title="VM Verzeichnis auswählen", parent=self,
-                                       action=Gtk.FileChooserAction.SELECT_FOLDER)
-        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                           "Auswählen", Gtk.ResponseType.OK)
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            self.entry_path.set_text(dialog.get_filename())
-        dialog.destroy()
-
+    def on_browse(self, w):
+        d = Gtk.FileChooserDialog(title="Select VM Directory", parent=self,
+                                  action=Gtk.FileChooserAction.SELECT_FOLDER)
+        d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Select", Gtk.ResponseType.OK)
+        if d.run() == Gtk.ResponseType.OK:
+            self.entry_path.set_text(d.get_filename())
+        d.destroy()
     def get_vm_config(self):
         firmware = "BIOS"
         if self.radio_uefi.get_active():
@@ -260,46 +254,79 @@ class VMCreateDialog(Gtk.Dialog):
             "disk_type": "qcow2" if self.radio_qcow2.get_active() else "raw",
             "firmware": firmware,
             "display": self.combo_disp.get_active_text(),
-            "iso": self.iso_path,
-            "3d_acceleration": self.check_3d.get_active()
+            "iso": urllib.parse.unquote(self.iso_path) if self.iso_path else "",
+            "3d_acceleration": self.check_3d.get_active(),
+            "disk_image": os.path.join(self.entry_path.get_text(), self.entry_name.get_text() + ".img")
         }
-        config["disk_image"] = os.path.join(config["path"], config["name"] + ".img")
+        if not os.path.exists(config["disk_image"]):
+            qemu_img = shutil.which("qemu-img")
+            if qemu_img:
+                try:
+                    subprocess.check_call([qemu_img, "create", "-f", config["disk_type"],
+                                           config["disk_image"], f"{config['disk']}G"])
+                except Exception:
+                    pass
+        if config["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
+            ovmf_dir = os.path.join(config["path"], "ovmf")
+            secure = (config["firmware"] == "UEFI+Secure Boot")
+            os.makedirs(ovmf_dir, exist_ok=True)
+            code, vars_file = get_ovmf_files(secure, custom_dir=ovmf_dir)
+            if not (code and vars_file):
+                pkg_cmd = None
+                if shutil.which("apt-get"):
+                    pkg_cmd = ["apt-get", "install", "-y", "ovmf"]
+                elif shutil.which("dnf"):
+                    pkg_cmd = ["dnf", "install", "-y", "edk2-ovmf"]
+                elif shutil.which("pacman"):
+                    pkg_cmd = ["pacman", "-S", "--noconfirm", "edk2-ovmf"]
+                if pkg_cmd is not None:
+                    sudo_pwd = prompt_sudo_password(None)
+                    if sudo_pwd is None:
+                        show_error_dialog("Sudo password not provided!")
+                    else:
+                        full_cmd = f"echo {sudo_pwd} | sudo -S " + " ".join(pkg_cmd)
+                        try:
+                            subprocess.check_call(full_cmd, shell=True)
+                        except Exception:
+                            pass
+                        try:
+                            src_code = "/usr/share/edk2/x64/OVMF_CODE.secboot.4m.fd" if secure else "/usr/share/edk2/x64/OVMF_CODE.4m.fd"
+                            src_vars = "/usr/share/edk2/x64/OVMF_VARS.fd"
+                            shutil.copy(src_code, os.path.join(ovmf_dir, os.path.basename(src_code)))
+                            shutil.copy(src_vars, os.path.join(ovmf_dir, os.path.basename(src_vars)))
+                        except Exception:
+                            pass
+                        code, vars_file = get_ovmf_files(secure, custom_dir=ovmf_dir)
+            config["ovmf_code"] = code
+            config["ovmf_vars"] = vars_file
+        config["launch_cmd"] = build_launch_command(config)
         return config
 
-# -------------------------------------------------------------------
-# Dialog zur Bearbeitung bestehender VM-Einstellungen
-# -------------------------------------------------------------------
+# ===== VM SETTINGS DIALOG =====
 class VMSettingsDialog(Gtk.Dialog):
     def __init__(self, parent, config):
-        super().__init__(title="VM Einstellungen bearbeiten", transient_for=parent)
-        self.set_default_size(500, 400)
+        super().__init__(title="Edit VM Settings", transient_for=parent)
+        self.set_default_size(500,400)
         self.config = config.copy()
         box = self.get_content_area()
-
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
-        grid.set_margin_top(10)
-        grid.set_margin_bottom(10)
-        grid.set_margin_start(10)
-        grid.set_margin_end(10)
-
-        lbl_iso = Gtk.Label(label="ISO Pfad:")
+        grid.set_margin_top(10); grid.set_margin_bottom(10)
+        grid.set_margin_start(10); grid.set_margin_end(10)
+        grid.attach(Gtk.Label(label="ISO Path:"), 0,0,1,1)
         self.entry_iso = Gtk.Entry(text=self.config.get("iso", ""))
-        grid.attach(lbl_iso, 0, 0, 1, 1)
-        grid.attach(self.entry_iso, 1, 0, 2, 1)
-
-        lbl_cpu = Gtk.Label(label="CPU Kerne:")
-        self.spin_cpu = Gtk.SpinButton.new_with_range(1, 32, 1)
-        self.spin_cpu.set_value(self.config.get("cpu", 2))
-        grid.attach(lbl_cpu, 0, 1, 1, 1)
-        grid.attach(self.spin_cpu, 1, 1, 2, 1)
-
-        lbl_ram = Gtk.Label(label="RAM (MiB):")
-        self.spin_ram = Gtk.SpinButton.new_with_range(256, 131072, 256)
-        self.spin_ram.set_value(self.config.get("ram", 4096))
-        grid.attach(lbl_ram, 0, 2, 1, 1)
-        grid.attach(self.spin_ram, 1, 2, 2, 1)
-
-        lbl_fw = Gtk.Label(label="Firmware:")
+        btn = Gtk.Button(label="Browse")
+        btn.connect("clicked", self.on_iso_browse)
+        grid.attach(self.entry_iso, 1,0,1,1)
+        grid.attach(btn, 2,0,1,1)
+        grid.attach(Gtk.Label(label="CPU Cores:"), 0,1,1,1)
+        self.spin_cpu = Gtk.SpinButton.new_with_range(1,32,1)
+        self.spin_cpu.set_value(self.config.get("cpu",2))
+        grid.attach(self.spin_cpu, 1,1,2,1)
+        grid.attach(Gtk.Label(label="RAM (MiB):"), 0,2,1,1)
+        self.spin_ram = Gtk.SpinButton.new_with_range(256,131072,256)
+        self.spin_ram.set_value(self.config.get("ram",4096))
+        grid.attach(self.spin_ram, 1,2,2,1)
+        grid.attach(Gtk.Label(label="Firmware:"), 0,3,1,1)
         fw_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.radio_bios = Gtk.RadioButton.new_with_label_from_widget(None, "BIOS")
         self.radio_uefi = Gtk.RadioButton.new_with_label_from_widget(self.radio_bios, "UEFI")
@@ -307,297 +334,241 @@ class VMSettingsDialog(Gtk.Dialog):
         fw_box.pack_start(self.radio_bios, False, False, 0)
         fw_box.pack_start(self.radio_uefi, False, False, 0)
         fw_box.pack_start(self.radio_secure, False, False, 0)
-        if self.config.get("firmware", "BIOS") == "UEFI":
+        if self.config.get("firmware", "BIOS")=="UEFI":
             self.radio_uefi.set_active(True)
-        elif self.config.get("firmware") == "UEFI+Secure Boot":
+        elif self.config.get("firmware")=="UEFI+Secure Boot":
             self.radio_secure.set_active(True)
         else:
             self.radio_bios.set_active(True)
-        grid.attach(lbl_fw, 0, 3, 1, 1)
-        grid.attach(fw_box, 1, 3, 2, 1)
-
-        lbl_disp = Gtk.Label(label="Display:")
+        grid.attach(fw_box, 1,3,2,1)
+        grid.attach(Gtk.Label(label="Display:"), 0,4,1,1)
         self.combo_disp = Gtk.ComboBoxText()
-        self.combo_disp.append_text("gtk (default)")
-        self.combo_disp.append_text("qxl")
-        self.combo_disp.append_text("spice")
+        for opt in ["gtk (default)", "qxl", "spice"]:
+            self.combo_disp.append_text(opt)
         self.combo_disp.set_active(0)
-        grid.attach(lbl_disp, 0, 4, 1, 1)
-        grid.attach(self.combo_disp, 1, 4, 2, 1)
-
-        lbl_3d = Gtk.Label(label="3D Beschleunigung:")
+        grid.attach(self.combo_disp, 1,4,2,1)
+        grid.attach(Gtk.Label(label="3D Acceleration:"), 0,5,1,1)
         self.check_3d = Gtk.CheckButton()
-        self.check_3d.set_active(self.config.get("3d_acceleration", False))
-        grid.attach(lbl_3d, 0, 5, 1, 1)
-        grid.attach(self.check_3d, 1, 5, 2, 1)
-
+        self.check_3d.set_active(self.config.get("3d_acceleration",False))
+        grid.attach(self.check_3d, 1,5,2,1)
         box.add(grid)
-        self.add_button("Abbrechen", Gtk.ResponseType.CANCEL)
-        self.add_button("Speichern", Gtk.ResponseType.OK)
+        self.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        self.add_button("Save", Gtk.ResponseType.OK)
         self.show_all()
-
+    def on_iso_browse(self, w):
+        d = Gtk.FileChooserDialog(title="Select ISO File", parent=self,
+                                  action=Gtk.FileChooserAction.OPEN)
+        d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+        f = Gtk.FileFilter(); f.set_name("ISO files"); f.add_pattern("*.iso"); d.add_filter(f)
+        if d.run() == Gtk.ResponseType.OK:
+            self.entry_iso.set_text(d.get_filename())
+        d.destroy()
     def get_updated_config(self):
         firmware = "BIOS"
         if self.radio_uefi.get_active():
             firmware = "UEFI"
         elif self.radio_secure.get_active():
             firmware = "UEFI+Secure Boot"
-        self.config["iso"] = self.entry_iso.get_text()
+        self.config["iso"] = urllib.parse.unquote(self.entry_iso.get_text())
         self.config["cpu"] = self.spin_cpu.get_value_as_int()
         self.config["ram"] = self.spin_ram.get_value_as_int()
         self.config["firmware"] = firmware
         self.config["display"] = self.combo_disp.get_active_text()
         self.config["3d_acceleration"] = self.check_3d.get_active()
+        self.config["launch_cmd"] = build_launch_command(self.config)
         return self.config
 
-# -------------------------------------------------------------------
-# Dialog zum Klonen einer VM
-# -------------------------------------------------------------------
+# ===== VM CLONE DIALOG =====
 class VMCloneDialog(Gtk.Dialog):
     def __init__(self, parent, vm_config):
-        super().__init__(title="VM klonen", transient_for=parent)
-        self.set_default_size(400, 200)
+        super().__init__(title="Clone VM", transient_for=parent)
+        self.set_default_size(400,200)
         self.original_vm = vm_config
         box = self.get_content_area()
-
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
-        grid.set_margin_top(10)
-        grid.set_margin_bottom(10)
-        grid.set_margin_start(10)
-        grid.set_margin_end(10)
-
-        lbl_new_name = Gtk.Label(label="Neuer VM Name:")
+        grid.set_margin_top(10); grid.set_margin_bottom(10)
+        grid.set_margin_start(10); grid.set_margin_end(10)
+        grid.attach(Gtk.Label(label="New VM Name:"), 0,0,1,1)
         self.entry_new_name = Gtk.Entry(text=self.original_vm["name"] + "_clone")
-        grid.attach(lbl_new_name, 0, 0, 1, 1)
-        grid.attach(self.entry_new_name, 1, 0, 2, 1)
-
-        lbl_new_path = Gtk.Label(label="Neuer Pfad:")
+        grid.attach(self.entry_new_name, 1,0,2,1)
+        grid.attach(Gtk.Label(label="New Directory:"), 0,1,1,1)
         self.entry_new_path = Gtk.Entry()
-        btn_browse = Gtk.Button(label="Durchsuchen")
-        btn_browse.connect("clicked", self.on_browse)
-        grid.attach(lbl_new_path, 0, 1, 1, 1)
-        grid.attach(self.entry_new_path, 1, 1, 1, 1)
-        grid.attach(btn_browse, 2, 1, 1, 1)
-
+        btn = Gtk.Button(label="Browse")
+        btn.connect("clicked", self.on_browse)
+        grid.attach(self.entry_new_path, 1,1,1,1)
+        grid.attach(btn, 2,1,1,1)
         box.add(grid)
-        self.add_button("Abbrechen", Gtk.ResponseType.CANCEL)
-        self.add_button("Klonen", Gtk.ResponseType.OK)
+        self.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        self.add_button("Clone", Gtk.ResponseType.OK)
         self.show_all()
-
-    def on_browse(self, widget):
-        dialog = Gtk.FileChooserDialog(title="Zielordner auswählen", parent=self,
-                                       action=Gtk.FileChooserAction.SELECT_FOLDER)
-        dialog.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                           "Auswählen", Gtk.ResponseType.OK)
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            self.entry_new_path.set_text(dialog.get_filename())
-        dialog.destroy()
-
+    def on_browse(self, w):
+        d = Gtk.FileChooserDialog(title="Select Destination Folder", parent=self,
+                                  action=Gtk.FileChooserAction.SELECT_FOLDER)
+        d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Select", Gtk.ResponseType.OK)
+        if d.run() == Gtk.ResponseType.OK:
+            self.entry_new_path.set_text(d.get_filename())
+        d.destroy()
     def get_clone_info(self):
-        return {
-            "new_name": self.entry_new_name.get_text(),
-            "new_path": self.entry_new_path.get_text()
-        }
+        return {"new_name": self.entry_new_name.get_text(), "new_path": self.entry_new_path.get_text()}
 
-# -------------------------------------------------------------------
-# Hauptfenster der Anwendung
-# -------------------------------------------------------------------
+# ===== MAIN WINDOW =====
 class QEMUManagerMain(Gtk.Window):
     def __init__(self):
         super().__init__(title="QEMU VM Manager")
-        self.set_default_size(600, 400)
+        self.set_default_size(600,400)
         self.vm_configs = load_all_vm_configs()
         self.build_ui()
-
+        self.apply_css()
     def build_ui(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        vbox.set_margin_top(10)
-        vbox.set_margin_bottom(10)
-        vbox.set_margin_start(10)
-        vbox.set_margin_end(10)
-
+        vbox.set_margin_top(10); vbox.set_margin_bottom(10)
+        vbox.set_margin_start(10); vbox.set_margin_end(10)
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
         self.set_titlebar(header)
         btn_add = Gtk.Button(label="+")
         btn_add.connect("clicked", self.on_add_vm)
         header.pack_end(btn_add)
-
-        self.flow_box = Gtk.FlowBox()
-        self.flow_box.set_max_children_per_line(1)
-        self.flow_box.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.flow_box.set_halign(Gtk.Align.CENTER)
+        self.listbox = Gtk.ListBox()
+        self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.listbox.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
         scrolled = Gtk.ScrolledWindow()
-        scrolled.add(self.flow_box)
+        scrolled.add(self.listbox)
         vbox.pack_start(scrolled, True, True, 0)
         self.add(vbox)
         self.refresh_vm_list()
-
-    def on_add_vm(self, widget):
-        iso_dialog = ISOSelectDialog(self)
-        iso_dialog.show_all()
-
-    def add_vm(self, vm_config):
-        save_vm_config(vm_config)
-        index = load_vm_index()
-        if vm_config["path"] not in index:
-            index.append(vm_config["path"])
-            save_vm_index(index)
+    def apply_css(self):
+        css = b"""
+        window { background-color: rgba(255,255,255,0.15); }
+        .vm-item { background-color: rgba(50,50,50,0.8); border: 2px solid #555; border-radius: 4px; padding: 5px; margin: 5px; }
+        .vm-item label { color: #fff; font-weight: bold; }
+        .round-button { border-radius: 16px; padding: 0; background-color: transparent; }
+        """
+        sp = Gtk.CssProvider()
+        sp.load_from_data(css)
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), sp, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+    def on_add_vm(self, w):
+        d = ISOSelectDialog(self)
+        d.show_all()
+    def add_vm(self, config):
+        save_vm_config(config)
+        idx = load_vm_index()
+        if config["path"] not in idx:
+            idx.append(config["path"])
+            save_vm_index(idx)
         self.vm_configs = load_all_vm_configs()
         self.refresh_vm_list()
-
     def refresh_vm_list(self):
-        for child in self.flow_box.get_children():
-            self.flow_box.remove(child)
+        for row in self.listbox.get_children():
+            self.listbox.remove(row)
         for vm in self.vm_configs:
-            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            hbox.set_hexpand(True)
-            label_vm = Gtk.Label()
-            label_vm.set_markup(f"<b><span foreground='white'>{vm['name']}</span></b>")
-            label_vm.set_xalign(0)
-            hbox.pack_start(label_vm, True, True, 0)
-            btn_play = Gtk.Button(label="Start")
-            btn_play.connect("clicked", lambda w, vm=vm: self.start_vm(vm))
-            btn_settings = Gtk.Button(label="Einstellungen")
-            btn_settings.connect("clicked", lambda w, vm=vm: self.edit_vm(vm))
-            hbox.pack_end(btn_settings, False, False, 0)
-            hbox.pack_end(btn_play, False, False, 0)
-            event_box = Gtk.EventBox()
-            event_box.add(hbox)
-            event_box.connect("button-press-event", self.on_vm_event, vm)
-            self.flow_box.add(event_box)
-        self.flow_box.show_all()
-
-    def on_vm_event(self, widget, event, vm):
-        if event.type == Gdk.EventType._2BUTTON_PRESS and event.button == 1:
-            self.start_vm(vm)
-        elif event.button == 3:
+            row = self.create_vm_row(vm)
+            self.listbox.add(row)
+        self.listbox.show_all()
+    def create_vm_row(self, vm):
+        row = Gtk.ListBoxRow()
+        row.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        hbox.get_style_context().add_class("vm-item")
+        label = Gtk.Label(label=vm["name"])
+        label.set_xalign(0.0)
+        hbox.pack_start(label, True, True, 0)
+        play_btn = Gtk.Button()
+        play_btn.set_relief(Gtk.ReliefStyle.NONE)
+        play_btn.set_size_request(32,32)
+        play_img = Gtk.Image.new_from_icon_name("media-playback-start", Gtk.IconSize.BUTTON)
+        play_btn.set_image(play_img)
+        play_btn.get_style_context().add_class("round-button")
+        play_btn.connect("clicked", lambda b, vm=vm: self.start_vm(vm))
+        settings_btn = Gtk.Button()
+        settings_btn.set_relief(Gtk.ReliefStyle.NONE)
+        settings_btn.set_size_request(32,32)
+        set_img = Gtk.Image.new_from_icon_name("preferences-system", Gtk.IconSize.BUTTON)
+        settings_btn.set_image(set_img)
+        settings_btn.get_style_context().add_class("round-button")
+        settings_btn.connect("clicked", lambda b, vm=vm: self.edit_vm(vm))
+        hbox.pack_end(settings_btn, False, False, 0)
+        hbox.pack_end(play_btn, False, False, 0)
+        row.add(hbox)
+        # Right-click context menu on entire row
+        row.connect("button-press-event", self.on_vm_item_event, vm)
+        return row
+    def on_vm_item_event(self, w, event, vm):
+        # Do nothing on double-click
+        if event.button == 3:
             menu = self.create_context_menu(vm)
             menu.popup_at_pointer(event)
-
     def create_context_menu(self, vm):
         menu = Gtk.Menu()
-        item_start = Gtk.MenuItem(label="Start")
-        item_start.connect("activate", lambda w: self.start_vm(vm))
-        menu.append(item_start)
-        item_shutdown = Gtk.MenuItem(label="Shutdown erzwingen")
-        item_shutdown.connect("activate", lambda w: self.force_shutdown(vm))
-        menu.append(item_shutdown)
-        item_settings = Gtk.MenuItem(label="Einstellungen")
-        item_settings.connect("activate", lambda w: self.edit_vm(vm))
-        menu.append(item_settings)
-        item_delete = Gtk.MenuItem(label="Löschen")
-        item_delete.connect("activate", lambda w: self.delete_vm(vm))
-        menu.append(item_delete)
-        item_clone = Gtk.MenuItem(label="Klonen")
-        item_clone.connect("activate", lambda w: self.clone_vm(vm))
-        menu.append(item_clone)
+        for text, action in [("Start", self.start_vm), ("Force Shutdown", self.force_shutdown),
+                             ("Settings", self.edit_vm), ("Delete", self.delete_vm),
+                             ("Clone", self.clone_vm)]:
+            item = Gtk.MenuItem(label=text)
+            item.connect("activate", lambda b, a=action, vm=vm: a(vm))
+            menu.append(item)
         menu.show_all()
         return menu
-
     def start_vm(self, vm):
-        print("Starte VM:", vm["name"])
-        qemu_bin = shutil.which("qemu-kvm") or shutil.which("qemu-system-x86_64")
-        if not qemu_bin:
-            print("QEMU Binary nicht gefunden!")
+        launch_cmd = build_launch_command(vm)
+        if not launch_cmd:
+            show_error_dialog("QEMU binary not found!")
             return
-
-        disk_image = vm["disk_image"]
-        if not os.path.exists(disk_image):
-            qemu_img = shutil.which("qemu-img")
-            if qemu_img:
-                disk_size = vm["disk"]
-                print("Erstelle Festplattenabbild:", disk_image)
-                subprocess.call([qemu_img, "create", "-f", vm["disk_type"], disk_image, f"{disk_size}G"])
+        disk = vm["disk_image"]
+        if not os.path.exists(disk):
+            img = shutil.which("qemu-img")
+            if img:
+                try:
+                    subprocess.check_call([img, "create", "-f", vm["disk_type"], disk, f"{vm['disk']}G"])
+                except Exception:
+                    show_error_dialog("Failed to create disk image!")
+                    return
             else:
-                print("qemu-img nicht gefunden! Kann Festplattenabbild nicht erstellen.")
+                show_error_dialog("qemu-img not found! Cannot create disk image.")
                 return
-
-        cmd = [
-            qemu_bin,
-            "-enable-kvm",
-            "-cpu", "host",
-            "-smp", str(vm["cpu"]),
-            "-m", str(vm["ram"]),
-            "-drive", f"file={disk_image},format={vm['disk_type']},if=virtio",
-            "-boot", "menu=on",
-            "-usb",
-            "-device", "usb-tablet",
-            "-netdev", "user,id=net0",
-            "-device", "virtio-net-pci,netdev=net0"
-        ]
-        display_mode = vm["display"].lower()
-        if display_mode.startswith("gtk") or display_mode == "qxl":
-            if vm.get("3d_acceleration", False):
-                cmd.extend(["-vga", "qxl", "-display", "gtk,gl=on"])
-            else:
-                cmd.extend(["-vga", "qxl", "-display", "gtk"])
-        elif display_mode == "spice":
-            cmd.extend(["-vga", "qxl", "-display", "spice"])
-
-        if vm.get("iso"):
-            cmd.extend(["-cdrom", vm["iso"]])
-
-        if vm.get("firmware") in ["UEFI", "UEFI+Secure Boot"]:
-            secure = (vm["firmware"] == "UEFI+Secure Boot")
-            ovmf_code, ovmf_vars = get_ovmf_files(secure=secure)
-            if ovmf_code and ovmf_vars:
-                cmd.extend([
-                    "-drive", f"if=pflash,format=raw,readonly,file={ovmf_code}",
-                    "-drive", f"if=pflash,format=raw,file={ovmf_vars}"
-                ])
-            else:
-                print("UEFI Firmware Dateien nicht gefunden!")
-                return
-
-        print("Führe Befehl aus:", " ".join(cmd))
-        subprocess.Popen(cmd)
-
+        try:
+            subprocess.Popen(launch_cmd)
+        except Exception:
+            show_error_dialog("Failed to execute QEMU command.")
     def force_shutdown(self, vm):
-        print("Erzwinge Shutdown für VM:", vm["name"])
-        # Hier kann z. B. über den QEMU-Monitor ein Shutdown-Befehl implementiert werden.
-
+        show_error_dialog("Force shutdown is not implemented yet.")
     def edit_vm(self, vm):
-        settings_dialog = VMSettingsDialog(self, vm)
-        response = settings_dialog.run()
-        if response == Gtk.ResponseType.OK:
-            updated = settings_dialog.get_updated_config()
+        d = VMSettingsDialog(self, vm)
+        if d.run() == Gtk.ResponseType.OK:
+            updated = d.get_updated_config()
             save_vm_config(updated)
-            index = load_vm_index()
-            if vm["path"] in index:
-                index[index.index(vm["path"])] = updated["path"]
-            save_vm_index(index)
+            idx = load_vm_index()
+            if vm["path"] in idx:
+                idx[idx.index(vm["path"])] = updated["path"]
+            save_vm_index(idx)
             self.vm_configs = load_all_vm_configs()
             self.refresh_vm_list()
-        settings_dialog.destroy()
-
+        d.destroy()
     def delete_vm(self, vm):
-        dialog = Gtk.MessageDialog(transient_for=self,
-                                   message_type=Gtk.MessageType.WARNING,
-                                   buttons=Gtk.ButtonsType.OK_CANCEL,
-                                   text=f"Soll die VM '{vm['name']}' wirklich gelöscht werden?")
-        response = dialog.run()
-        dialog.destroy()
-        if response == Gtk.ResponseType.OK:
-            index = load_vm_index()
-            if vm["path"] in index:
-                index.remove(vm["path"])
-                save_vm_index(index)
-            self.vm_configs = [cfg for cfg in self.vm_configs if cfg["path"] != vm["path"]]
+        d = Gtk.MessageDialog(transient_for=self, message_type=Gtk.MessageType.WARNING,
+                              buttons=Gtk.ButtonsType.OK_CANCEL,
+                              text=f"Delete VM '{vm['name']}' and all its files?")
+        if d.run() == Gtk.ResponseType.OK:
+            idx = load_vm_index()
+            if vm["path"] in idx:
+                idx.remove(vm["path"])
+                save_vm_index(idx)
+            try:
+                shutil.rmtree(vm["path"])
+            except Exception:
+                show_error_dialog("Failed to delete VM directory!")
+            self.vm_configs = [c for c in self.vm_configs if c["path"] != vm["path"]]
             self.refresh_vm_list()
-
+        d.destroy()
     def clone_vm(self, vm):
-        clone_dialog = VMCloneDialog(self, vm)
-        response = clone_dialog.run()
-        if response == Gtk.ResponseType.OK:
-            clone_info = clone_dialog.get_clone_info()
+        d = VMCloneDialog(self, vm)
+        if d.run() == Gtk.ResponseType.OK:
+            info = d.get_clone_info()
             new_vm = vm.copy()
-            new_vm["name"] = clone_info["new_name"]
-            new_vm["path"] = clone_info["new_path"]
+            new_vm["name"] = info["new_name"]
+            new_vm["path"] = info["new_path"]
             new_vm["disk_image"] = os.path.join(new_vm["path"], new_vm["name"] + ".img")
             self.add_vm(new_vm)
-        clone_dialog.destroy()
+        d.destroy()
 
 def main():
     win = QEMUManagerMain()
