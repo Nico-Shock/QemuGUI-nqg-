@@ -4,41 +4,41 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
 
-# ===== GLOBAL CONFIG =====
+##### GLOBAL CONFIGURATION #####
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".qemu_manager")
 if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR)
 INDEX_FILE = os.path.join(CONFIG_DIR, "vms_index.json")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ===== OVMF FILES =====
-def get_ovmf_files(secure=False, custom_dir=None):
-    dirs = []
-    if custom_dir:
-        dirs.append(custom_dir)
-    dirs.extend(["/usr/share/OVMF", "/usr/local/share/OVMF", BASE_DIR])
-    for d in dirs:
-        code = os.path.join(d, "OVMF_CODE.secboot.4m.fd" if secure else "OVMF_CODE.4m.fd")
-        vars_file = os.path.join(d, "OVMF_VARS.fd")
-        if os.path.exists(code) and os.path.exists(vars_file):
-            return code, vars_file
-    return "", ""
-
+##### OVMF FILE HANDLING #####
+# Copies 4 files from /usr/share/edk2/x64 to the VM's "ovmf" folder.
+# Files: OVMF.4m.fd, OVMF_CODE.4m.fd, OVMF_CODE.secboot.4m.fd, OVMF_VARS.4m.fd.
+# If normal copy fails, prompts for sudo password to copy with elevated rights.
 def copy_uefi_files(config):
     ovmf_dir = os.path.join(config["path"], "ovmf")
-    secure = (config["firmware"] == "UEFI+Secure Boot")
     os.makedirs(ovmf_dir, exist_ok=True)
-    try:
-        src_code = "/usr/share/edk2/x64/OVMF_CODE.secboot.4m.fd" if secure else "/usr/share/edk2/x64/OVMF_CODE.4m.fd"
-        src_vars = "/usr/share/edk2/x64/OVMF_VARS.fd"
-        shutil.copy(src_code, os.path.join(ovmf_dir, os.path.basename(src_code)))
-        shutil.copy(src_vars, os.path.join(ovmf_dir, os.path.basename(src_vars)))
-    except Exception:
-        show_error_dialog("Failed to copy UEFI firmware files!")
-    code, vars_file = get_ovmf_files(secure, custom_dir=ovmf_dir)
-    config["ovmf_code"] = code
-    config["ovmf_vars"] = vars_file
+    src_dir = "/usr/share/edk2/x64"
+    files = ["OVMF.4m.fd", "OVMF_CODE.4m.fd", "OVMF_CODE.secboot.4m.fd", "OVMF_VARS.4m.fd"]
+    for f in files:
+        src = os.path.join(src_dir, f)
+        dst = os.path.join(ovmf_dir, f)
+        try:
+            shutil.copy(src, dst)
+        except Exception:
+            sudo_pwd = prompt_sudo_password(None)
+            if sudo_pwd is not None:
+                full_cmd = f"echo {sudo_pwd} | sudo -S cp '{src}' '{dst}'"
+                try:
+                    subprocess.check_call(full_cmd, shell=True)
+                except Exception:
+                    pass
+    config["ovmf_code_normal"] = os.path.join(ovmf_dir, "OVMF.4m.fd")
+    config["ovmf_vars_normal"] = os.path.join(ovmf_dir, "OVMF_VARS.4m.fd")
+    config["ovmf_code_secure"] = os.path.join(ovmf_dir, "OVMF_CODE.secboot.4m.fd")
+    config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS.4m.fd")
 
+##### BUILD LAUNCH COMMAND #####
 def build_launch_command(config):
     qemu = shutil.which("qemu-kvm") or shutil.which("qemu-system-x86_64")
     if not qemu:
@@ -49,23 +49,30 @@ def build_launch_command(config):
            "-drive", f"file={config['disk_image']},format={config['disk_type']},if=virtio",
            "-boot", "menu=on",
            "-usb", "-device", "usb-tablet",
-           "-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0"]
-    dmode = config["display"].lower()
-    if dmode.startswith("gtk") or dmode == "qxl":
-        if config.get("3d_acceleration", False):
-            cmd.extend(["-vga", "qxl", "-display", "gtk,gl=on"])
-        else:
-            cmd.extend(["-vga", "qxl", "-display", "gtk"])
-    elif dmode == "spice":
-        cmd.extend(["-vga", "qxl", "-display", "spice"])
+           "-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0",
+           "-vga", "virtio"]
+    disp = config["display"].lower()
+    if disp == "gtk (default)":
+        cmd.extend(["-display", "gtk,gl=on" if config.get("3d_acceleration", False) else "gtk"])
+    elif disp == "qemu":
+        pass
+    elif disp == "qxl":
+        cmd.extend(["-display", "gtk,gl=on" if config.get("3d_acceleration", False) else "gtk"])
+    elif disp == "spice":
+        cmd.extend(["-display", "spice-app"])
     if config.get("iso"):
         iso_path = urllib.parse.unquote(config["iso"])
         cmd.extend(["-cdrom", iso_path])
-    if config.get("firmware") in ["UEFI", "UEFI+Secure Boot"]:
-        if config.get("ovmf_code"):
-            cmd.extend(["-bios", config["ovmf_code"]])
+    if config["firmware"] == "UEFI":
+        if config.get("ovmf_code_normal"):
+            cmd.extend(["-bios", config["ovmf_code_normal"]])
+    elif config["firmware"] == "UEFI+Secure Boot":
+        if config.get("ovmf_code_secure") and config.get("ovmf_vars_secure"):
+            cmd.extend(["-drive", f"if=pflash,format=raw,readonly=on,file={config['ovmf_code_secure']}",
+                        "-drive", f"if=pflash,format=raw,file={config['ovmf_vars_secure']}"])
     return cmd
 
+##### CONFIGURATION LOAD/SAVE #####
 def load_vm_index():
     if os.path.exists(INDEX_FILE) and os.path.getsize(INDEX_FILE) > 0:
         try:
@@ -102,18 +109,27 @@ def save_vm_config(config):
         show_error_dialog("Error saving VM configuration.\nCheck your permissions.")
         raise
 
-def show_error_dialog(msg):
-    d = Gtk.MessageDialog(transient_for=None, flags=0,
-                          message_type=Gtk.MessageType.ERROR,
-                          buttons=Gtk.ButtonsType.OK, text=msg)
-    d.run()
+##### SUDO PROMPT #####
+def prompt_sudo_password(parent):
+    d = Gtk.Dialog(title="Sudo Password Required", transient_for=parent, flags=0)
+    d.add_buttons("OK", Gtk.ResponseType.OK, "Cancel", Gtk.ResponseType.CANCEL)
+    box = d.get_content_area()
+    box.add(Gtk.Label(label="Enter your sudo password:"))
+    entry = Gtk.Entry()
+    entry.set_visibility(False)
+    box.add(entry)
+    d.show_all()
+    resp = d.run()
+    pwd = entry.get_text() if resp == Gtk.ResponseType.OK else None
     d.destroy()
+    return pwd
 
+##### LOADING DIALOG #####
 class LoadingDialog(Gtk.Dialog):
     def __init__(self, parent, msg="Installing OVMF firmware files..."):
         super().__init__(title="Please wait", transient_for=parent)
         self.set_modal(True)
-        self.set_default_size(300, 100)
+        self.set_default_size(300,100)
         box = self.get_content_area()
         box.add(Gtk.Label(label=msg))
         self.progress = Gtk.ProgressBar()
@@ -128,9 +144,10 @@ class LoadingDialog(Gtk.Dialog):
         GLib.source_remove(self.timeout_id)
         super().destroy()
 
+##### ISO SELECTION DIALOG #####
 class ISOSelectDialog(Gtk.Window):
     def __init__(self, parent):
-        super().__init__(title="Select ISO")
+        super().__init__(title="Select ISO", transient_for=parent)
         self.parent = parent
         self.set_default_size(400,300)
         self.set_position(Gtk.WindowPosition.CENTER)
@@ -155,7 +172,10 @@ class ISOSelectDialog(Gtk.Window):
         d = Gtk.FileChooserDialog(title="Select ISO File", parent=self,
                                   action=Gtk.FileChooserAction.OPEN)
         d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
-        f = Gtk.FileFilter(); f.set_name("ISO files"); f.add_pattern("*.iso"); d.add_filter(f)
+        f = Gtk.FileFilter()
+        f.set_name("ISO files")
+        f.add_pattern("*.iso")
+        d.add_filter(f)
         if d.run() == Gtk.ResponseType.OK:
             self.iso_chosen(d.get_filename())
         d.destroy()
@@ -170,6 +190,7 @@ class ISOSelectDialog(Gtk.Window):
             self.parent.add_vm(d.get_vm_config())
         d.destroy()
 
+##### NEW VM DIALOG #####
 class VMCreateDialog(Gtk.Dialog):
     def __init__(self, parent, iso_path=None):
         super().__init__(title="New VM Configuration", transient_for=parent)
@@ -216,7 +237,7 @@ class VMCreateDialog(Gtk.Dialog):
         grid.attach(fw_box, 1, 6, 2, 1)
         grid.attach(Gtk.Label(label="Display:"), 0, 7, 1, 1)
         self.combo_disp = Gtk.ComboBoxText()
-        for opt in ["gtk (default)", "qxl", "spice"]:
+        for opt in ["gtk (default)", "qemu", "qxl", "spice"]:
             self.combo_disp.append_text(opt)
         self.combo_disp.set_active(0)
         grid.attach(self.combo_disp, 1, 7, 2, 1)
@@ -263,54 +284,12 @@ class VMCreateDialog(Gtk.Dialog):
                     pass
         if config["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
             ovmf_dir = os.path.join(config["path"], "ovmf")
-            secure = (config["firmware"] == "UEFI+Secure Boot")
             os.makedirs(ovmf_dir, exist_ok=True)
-            code, vars_file = get_ovmf_files(secure, custom_dir=ovmf_dir)
-            if not (code and vars_file):
-                pkg_cmd = None
-                if shutil.which("apt-get"):
-                    pkg_cmd = ["apt-get", "install", "-y", "ovmf"]
-                elif shutil.which("dnf"):
-                    pkg_cmd = ["dnf", "install", "-y", "edk2-ovmf"]
-                elif shutil.which("pacman"):
-                    pkg_cmd = ["pacman", "-S", "--noconfirm", "edk2-ovmf"]
-                if pkg_cmd is not None:
-                    sudo_pwd = prompt_sudo_password(None)
-                    if sudo_pwd is None:
-                        show_error_dialog("Sudo password not provided!")
-                    else:
-                        full_cmd = f"echo {sudo_pwd} | sudo -S " + " ".join(pkg_cmd)
-                        try:
-                            subprocess.check_call(full_cmd, shell=True)
-                        except Exception:
-                            pass
-                    try:
-                        src_code = "/usr/share/edk2/x64/OVMF_CODE.secboot.4m.fd" if secure else "/usr/share/edk2/x64/OVMF_CODE.4m.fd"
-                        src_vars = "/usr/share/edk2/x64/OVMF_VARS.fd"
-                        shutil.copy(src_code, os.path.join(ovmf_dir, os.path.basename(src_code)))
-                        shutil.copy(src_vars, os.path.join(ovmf_dir, os.path.basename(src_vars)))
-                    except Exception:
-                        pass
-                    code, vars_file = get_ovmf_files(secure, custom_dir=ovmf_dir)
-            config["ovmf_code"] = code
-            config["ovmf_vars"] = vars_file
+            copy_uefi_files(config)
         config["launch_cmd"] = build_launch_command(config)
         return config
 
-def prompt_sudo_password(parent):
-    d = Gtk.Dialog(title="Sudo Password Required", transient_for=parent, flags=0)
-    d.add_buttons("OK", Gtk.ResponseType.OK, "Cancel", Gtk.ResponseType.CANCEL)
-    box = d.get_content_area()
-    box.add(Gtk.Label(label="Enter your sudo password:"))
-    entry = Gtk.Entry()
-    entry.set_visibility(False)
-    box.add(entry)
-    d.show_all()
-    resp = d.run()
-    pwd = entry.get_text() if resp == Gtk.ResponseType.OK else None
-    d.destroy()
-    return pwd
-
+##### VM SETTINGS DIALOG #####
 class VMSettingsDialog(Gtk.Dialog):
     def __init__(self, parent, config):
         super().__init__(title="Edit VM Settings", transient_for=parent)
@@ -320,21 +299,21 @@ class VMSettingsDialog(Gtk.Dialog):
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
         grid.set_margin_top(10); grid.set_margin_bottom(10)
         grid.set_margin_start(10); grid.set_margin_end(10)
-        grid.attach(Gtk.Label(label="ISO Path:"), 0,0,1,1)
+        grid.attach(Gtk.Label(label="ISO Path:"), 0, 0, 1, 1)
         self.entry_iso = Gtk.Entry(text=self.config.get("iso", ""))
         btn = Gtk.Button(label="Browse")
         btn.connect("clicked", self.on_iso_browse)
-        grid.attach(self.entry_iso, 1,0,1,1)
-        grid.attach(btn, 2,0,1,1)
-        grid.attach(Gtk.Label(label="CPU Cores:"), 0,1,1,1)
+        grid.attach(self.entry_iso, 1, 0, 1, 1)
+        grid.attach(btn, 2, 0, 1, 1)
+        grid.attach(Gtk.Label(label="CPU Cores:"), 0, 1, 1, 1)
         self.spin_cpu = Gtk.SpinButton.new_with_range(1,32,1)
-        self.spin_cpu.set_value(self.config.get("cpu",2))
-        grid.attach(self.spin_cpu, 1,1,2,1)
-        grid.attach(Gtk.Label(label="RAM (MiB):"), 0,2,1,1)
+        self.spin_cpu.set_value(self.config.get("cpu", 2))
+        grid.attach(self.spin_cpu, 1, 1, 2, 1)
+        grid.attach(Gtk.Label(label="RAM (MiB):"), 0, 2, 1, 1)
         self.spin_ram = Gtk.SpinButton.new_with_range(256,131072,256)
-        self.spin_ram.set_value(self.config.get("ram",4096))
-        grid.attach(self.spin_ram, 1,2,2,1)
-        grid.attach(Gtk.Label(label="Firmware:"), 0,3,1,1)
+        self.spin_ram.set_value(self.config.get("ram", 4096))
+        grid.attach(self.spin_ram, 1, 2, 2, 1)
+        grid.attach(Gtk.Label(label="Firmware:"), 0, 3, 1, 1)
         fw_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.radio_bios = Gtk.RadioButton.new_with_label_from_widget(None, "BIOS")
         self.radio_uefi = Gtk.RadioButton.new_with_label_from_widget(self.radio_bios, "UEFI")
@@ -348,17 +327,17 @@ class VMSettingsDialog(Gtk.Dialog):
             self.radio_secure.set_active(True)
         else:
             self.radio_bios.set_active(True)
-        grid.attach(fw_box, 1,3,2,1)
-        grid.attach(Gtk.Label(label="Display:"), 0,4,1,1)
+        grid.attach(fw_box, 1, 3, 2, 1)
+        grid.attach(Gtk.Label(label="Display:"), 0, 4, 1, 1)
         self.combo_disp = Gtk.ComboBoxText()
-        for opt in ["gtk (default)", "qxl", "spice"]:
+        for opt in ["gtk (default)", "qemu", "qxl", "spice"]:
             self.combo_disp.append_text(opt)
         self.combo_disp.set_active(0)
-        grid.attach(self.combo_disp, 1,4,2,1)
-        grid.attach(Gtk.Label(label="3D Acceleration:"), 0,5,1,1)
+        grid.attach(self.combo_disp, 1, 4, 2, 1)
+        grid.attach(Gtk.Label(label="3D Acceleration:"), 0, 5, 1, 1)
         self.check_3d = Gtk.CheckButton()
         self.check_3d.set_active(self.config.get("3d_acceleration", False))
-        grid.attach(self.check_3d, 1,5,2,1)
+        grid.attach(self.check_3d, 1, 5, 2, 1)
         box.add(grid)
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Apply", Gtk.ResponseType.OK)
@@ -367,7 +346,10 @@ class VMSettingsDialog(Gtk.Dialog):
         d = Gtk.FileChooserDialog(title="Select ISO File", parent=self,
                                   action=Gtk.FileChooserAction.OPEN)
         d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
-        f = Gtk.FileFilter(); f.set_name("ISO files"); f.add_pattern("*.iso"); d.add_filter(f)
+        f = Gtk.FileFilter()
+        f.set_name("ISO files")
+        f.add_pattern("*.iso")
+        d.add_filter(f)
         if d.run() == Gtk.ResponseType.OK:
             self.entry_iso.set_text(d.get_filename())
         d.destroy()
@@ -383,11 +365,11 @@ class VMSettingsDialog(Gtk.Dialog):
         self.config["firmware"] = firmware
         self.config["display"] = self.combo_disp.get_active_text()
         self.config["3d_acceleration"] = self.check_3d.get_active()
-        if self.config["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
-            copy_uefi_files(self.config)
+        copy_uefi_files(self.config)
         self.config["launch_cmd"] = build_launch_command(self.config)
         return self.config
 
+##### VM CLONE DIALOG #####
 class VMCloneDialog(Gtk.Dialog):
     def __init__(self, parent, vm_config):
         super().__init__(title="Clone VM", transient_for=parent)
@@ -397,15 +379,15 @@ class VMCloneDialog(Gtk.Dialog):
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
         grid.set_margin_top(10); grid.set_margin_bottom(10)
         grid.set_margin_start(10); grid.set_margin_end(10)
-        grid.attach(Gtk.Label(label="New VM Name:"), 0,0,1,1)
+        grid.attach(Gtk.Label(label="New VM Name:"), 0, 0, 1, 1)
         self.entry_new_name = Gtk.Entry(text=self.original_vm["name"] + "_clone")
-        grid.attach(self.entry_new_name, 1,0,2,1)
-        grid.attach(Gtk.Label(label="New Directory:"), 0,1,1,1)
+        grid.attach(self.entry_new_name, 1, 0, 2, 1)
+        grid.attach(Gtk.Label(label="New Directory:"), 0, 1, 1, 1)
         self.entry_new_path = Gtk.Entry()
         btn = Gtk.Button(label="Browse")
         btn.connect("clicked", self.on_browse)
-        grid.attach(self.entry_new_path, 1,1,1,1)
-        grid.attach(btn, 2,1,1,1)
+        grid.attach(self.entry_new_path, 1, 1, 1, 1)
+        grid.attach(btn, 2, 1, 1, 1)
         box.add(grid)
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Clone", Gtk.ResponseType.OK)
@@ -420,6 +402,7 @@ class VMCloneDialog(Gtk.Dialog):
     def get_clone_info(self):
         return {"new_name": self.entry_new_name.get_text(), "new_path": self.entry_new_path.get_text()}
 
+##### MAIN WINDOW #####
 class QEMUManagerMain(Gtk.Window):
     def __init__(self):
         super().__init__(title="QEMU VM Manager")
@@ -507,8 +490,7 @@ class QEMUManagerMain(Gtk.Window):
     def create_context_menu(self, vm):
         menu = Gtk.Menu()
         for text, action in [("Start", self.start_vm), ("Force Shutdown", self.force_shutdown),
-                             ("Settings", self.edit_vm), ("Delete", self.delete_vm),
-                             ("Clone", self.clone_vm)]:
+                             ("Settings", self.edit_vm), ("Delete", self.delete_vm), ("Clone", self.clone_vm)]:
             item = Gtk.MenuItem(label=text)
             item.connect("activate", lambda b, a=action, vm=vm: a(vm))
             menu.append(item)
@@ -576,6 +558,7 @@ class QEMUManagerMain(Gtk.Window):
             self.add_vm(new_vm)
         d.destroy()
 
+##### MAIN #####
 def main():
     win = QEMUManagerMain()
     win.connect("destroy", Gtk.main_quit)
