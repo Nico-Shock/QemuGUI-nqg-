@@ -12,12 +12,12 @@ INDEX_FILE = os.path.join(CONFIG_DIR, "vms_index.json")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 ##### OVMF FILE HANDLING #####
-# Copies only the normal UEFI files (OVMF.4m.fd, OVMF_VARS.4m.fd)
+# Copies both normal UEFI files (OVMF.4m.fd, OVMF_VARS.4m.fd) and Secure Boot UEFI files (OVMF_CODE.secboot.4m.fd, OVMF_VARS.secboot.4m.fd)
 def copy_uefi_files(config):
     ovmf_dir = os.path.join(config["path"], "ovmf")
     os.makedirs(ovmf_dir, exist_ok=True)
     src_dir = "/usr/share/edk2/x64"
-    files = ["OVMF.4m.fd", "OVMF_VARS.4m.fd"]
+    files = ["OVMF.4m.fd", "OVMF_VARS.4m.fd", "OVMF_CODE.secboot.4m.fd", "OVMF_VARS.secboot.4m.fd"] # Add Secure Boot files to the list
     for f in files:
         src = os.path.join(src_dir, f)
         dst = os.path.join(ovmf_dir, f)
@@ -37,8 +37,8 @@ def copy_uefi_files(config):
                     pass
     config["ovmf_code_normal"] = os.path.join(ovmf_dir, "OVMF.4m.fd")
     config["ovmf_vars_normal"] = os.path.join(ovmf_dir, "OVMF_VARS.4m.fd")
-    config["ovmf_code_secure"] = None
-    config["ovmf_vars_secure"] = None
+    config["ovmf_code_secure"] = os.path.join(ovmf_dir, "OVMF_CODE.secboot.4m.fd") # Define path for secure boot code
+    config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS.secboot.4m.fd") # Define path for secure boot vars
 
 def delete_ovmf_dir(config):
     ovmf_dir = os.path.join(config["path"], "ovmf")
@@ -78,12 +78,15 @@ def build_launch_command(config):
     if config["firmware"] == "UEFI":
         if config.get("ovmf_code_normal"):
             cmd.extend(["-bios", config["ovmf_code_normal"]])
+    elif config["firmware"] == "UEFI+Secure Boot": # Add condition for Secure Boot firmware
+        if config.get("ovmf_code_secure"): # Use secure boot OVMF file if available
+            cmd.extend(["-bios", config["ovmf_code_secure"]])
     if config.get("tpm_enabled", False): # Add TPM device if enabled in config
         tpm_dir = os.path.join(config["path"], "tpm") # Create a "tpm" subdirectory in VM path
         os.makedirs(tpm_dir, exist_ok=True) # Ensure the directory exists
         tpm_sock_path = os.path.join(tpm_dir, "tpm0.sock") # Construct absolute path
         cmd.extend(["-device", "tpm-crb,id=tpm0",
-                    "-tpmdev", f"emulator,id=tpm0,path={tpm_sock_path}"]) # type=unix removed
+                    "-tpmdev", f"emulator,id=tpm0,path={tpm_sock_path}"]) # type=unix entfernt
     return cmd
 
 ##### CONFIGURATION LOAD/SAVE #####
