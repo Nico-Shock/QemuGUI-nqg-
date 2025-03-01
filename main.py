@@ -16,7 +16,7 @@ def copy_uefi_files(config, parent_window=None):
     os.makedirs(ovmf_dir, exist_ok=True)
     src_dir = "/usr/share/edk2/x64"
     if config["firmware"] == "UEFI":
-        files = ["OVMF_CODE.4m.fd", "OVMF_VARS.4m.fd"]
+        files = ["OVMF.4m.fd", "OVMF_VARS.4m.fd"]
     elif config["firmware"] == "UEFI+Secure Boot":
         files = ["OVMF_CODE.secboot.4m.fd", "OVMF_VARS.4m.fd"]
     else:
