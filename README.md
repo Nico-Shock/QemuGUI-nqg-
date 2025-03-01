@@ -39,7 +39,8 @@ You should use this program if you want to manage virtual machines with QEMU KVM
 ## Requirements:
 
 - Enabled IOMMU and virtualization in your BIOS
-- KVM support (virtualization enabled on Linux)
+- Minimum 8GB of RAM
+- Minimum 4-Core CPU
 
 Needed packages:
 
