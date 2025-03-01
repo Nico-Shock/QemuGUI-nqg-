@@ -95,3 +95,4 @@ python main.py
 - Change Virtio Display to SDL.
 - Add TPM support.
 - Add snapshot support.
+- Add Support for Debian, Fedora and SerpentOS.
