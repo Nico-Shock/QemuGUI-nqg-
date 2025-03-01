@@ -1,7 +1,7 @@
 pkgname=nqg
 pkgver=0.0.0
 pkgrel=0
-pkgdesc="A easy simple to use qemu gui written in python"
+pkgdesc="A simple and easy-to-use QEMU-GUI written in Python."
 arch=('x86_64')
 url="https://github.com/Nico-Shock/QemuGUI-nqg-"
 depends=('python')
