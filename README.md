@@ -34,6 +34,8 @@ You should use this program if you want to manage virtual machines with QEMU KVM
 - In the settings, you can change anything that was previously configured.
 - You need to disable the ISO in the settings to boot your OS properly after a fresh install.
 
+(Screenshots will be added in the future)
+
 ## Known issues:
 
 - The right click menu only shows up when you right click on the settings icon.
