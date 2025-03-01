@@ -77,7 +77,7 @@ nqg
 
 Run it via Python:
 
-In the directory of the main.py file, run this:
+In the directory of the nqg.py file, run this:
 
 ```
 python nqg.py
