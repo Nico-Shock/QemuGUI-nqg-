@@ -1,5 +1,5 @@
 pkgname=nqg
-pkgver=0.0.0
+pkgver=0.0.1
 pkgrel=0
 pkgdesc="A easy simple to use qemu gui written in python"
 arch=('x86_64')
