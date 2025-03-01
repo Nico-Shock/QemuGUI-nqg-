@@ -36,6 +36,53 @@ You should use this program if you want to manage virtual machines with QEMU KVM
 
 (Screenshots will be added in the future)
 
+## Requirements:
+
+- Enabled IOMMU and virtualization in your BIOS
+- KVM support (virtualization enabled on Linux)
+
+Needed packages:
+
+```
+sudo pacman -S edk2-ovmf python qemu-full
+```
+
+## How to install on Arch-based Systems:
+
+First, clone the repo:
+
+```
+git clone https://github.com/Nico-Shock/QemuGUI-nqg-.git
+```
+
+Then go into the directory:
+
+```
+cd QemuGUI-nqg-
+```
+
+After that, build the package:
+
+```
+makepkg -si
+```
+
+Then launch the program:
+
+```
+nqg
+```
+
+### How to run it on other OSes:
+
+Run it via Python:
+
+In the directory of the main.py file, run this:
+
+```
+python main.py
+```
+
 ## Known issues:
 
 - The right click menu only shows up when you right click on the settings icon.
