@@ -80,7 +80,7 @@ Run it via Python:
 In the directory of the main.py file, run this:
 
 ```
-python main.py
+python nqg.py
 ```
 
 ## Known issues:
