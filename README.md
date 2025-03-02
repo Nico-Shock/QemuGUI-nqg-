@@ -101,3 +101,4 @@ python nqg.py
 - Change the main window so that the window uses the whole space without borders.
 - Change window name.
 - Simplify text.  ✅
+- Change title to "Nicos Qemu GUI".  
