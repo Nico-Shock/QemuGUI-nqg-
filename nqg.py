@@ -542,7 +542,7 @@ class VMCloneDialog(Gtk.Dialog):
 
 class QEMUManagerMain(Gtk.Window):
     def __init__(self):
-        super().__init__(title="QEMU VM Manager")
+        super().__init__(title="Nicos Qemu GUI")
         self.set_default_size(600,400)
         self.vm_configs = load_all_vm_configs()
         self.build_ui()
