@@ -372,8 +372,9 @@ class VMCreateDialog(Gtk.Dialog):
 class VMSettingsDialog(Gtk.Dialog):
     def __init__(self, parent, config):
         super().__init__(title="Edit VM Settings", transient_for=parent)
-        self.set_default_size(500,400)
+        self.set_default_size(500,450)
         self.config = config.copy()
+        self.original_name = config["name"]
         box = self.get_content_area()
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
         grid.set_margin_top(10)
@@ -381,27 +382,31 @@ class VMSettingsDialog(Gtk.Dialog):
         grid.set_margin_start(10)
         grid.set_margin_end(10)
 
-        self.check_iso_enable = Gtk.CheckButton()
-        self.check_iso_enable.set_active(self.config.get("iso_enabled", False) )
-        self.check_iso_enable.connect("toggled", self.on_iso_enabled_toggled_settings)
+        grid.attach(Gtk.Label(label="VM Name:"), 0, 0, 1, 1)
+        self.entry_name = Gtk.Entry()
+        self.entry_name.set_text(self.config.get("name", ""))
+        grid.attach(self.entry_name, 1, 0, 2, 1)
 
-        grid.attach(Gtk.Label(label="ISO Path:"), 0, 0, 1, 1)
+        self.check_iso_enable = Gtk.CheckButton()
+        self.check_iso_enable.set_active(self.config.get("iso_enabled", False))
+        self.check_iso_enable.connect("toggled", self.on_iso_enabled_toggled_settings)
+        grid.attach(Gtk.Label(label="ISO Path:"), 0, 1, 1, 1)
         self.entry_iso = Gtk.Entry(text=self.config.get("iso", ""))
-        grid.attach(self.entry_iso, 1, 0, 1, 1)
+        grid.attach(self.entry_iso, 1, 1, 1, 1)
         self.btn_iso_browse = Gtk.Button(label="Browse")
         self.btn_iso_browse.connect("clicked", self.on_iso_browse)
-        grid.attach(self.btn_iso_browse, 2, 0, 1, 1)
-        grid.attach(self.check_iso_enable, 3, 0, 1, 1)
+        grid.attach(self.btn_iso_browse, 2, 1, 1, 1)
+        grid.attach(self.check_iso_enable, 3, 1, 1, 1)
 
-        grid.attach(Gtk.Label(label="CPU Cores:"), 0, 1, 1, 1)
+        grid.attach(Gtk.Label(label="CPU Cores:"), 0, 2, 1, 1)
         self.spin_cpu = Gtk.SpinButton.new_with_range(1,32,1)
         self.spin_cpu.set_value(self.config.get("cpu", 2))
-        grid.attach(self.spin_cpu, 1, 1, 2, 1)
-        grid.attach(Gtk.Label(label="RAM (MiB):"), 0, 2, 1, 1)
+        grid.attach(self.spin_cpu, 1, 2, 2, 1)
+        grid.attach(Gtk.Label(label="RAM (MiB):"), 0, 3, 1, 1)
         self.spin_ram = Gtk.SpinButton.new_with_range(256,131072,256)
         self.spin_ram.set_value(self.config.get("ram", 4096))
-        grid.attach(self.spin_ram, 1, 2, 2, 1)
-        grid.attach(Gtk.Label(label="Firmware:"), 0, 3, 1, 1)
+        grid.attach(self.spin_ram, 1, 3, 2, 1)
+        grid.attach(Gtk.Label(label="Firmware:"), 0, 4, 1, 1)
         fw_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.radio_bios = Gtk.RadioButton.new_with_label_from_widget(None, "BIOS")
         self.radio_uefi = Gtk.RadioButton.new_with_label_from_widget(self.radio_bios, "UEFI")
@@ -415,23 +420,23 @@ class VMSettingsDialog(Gtk.Dialog):
             self.radio_secure.set_active(True)
         else:
             self.radio_bios.set_active(True)
-        grid.attach(fw_box, 1, 3, 2, 1)
-        grid.attach(Gtk.Label(label="Enable TPM:"), 0, 4, 1, 1)
+        grid.attach(fw_box, 1, 4, 2, 1)
+        grid.attach(Gtk.Label(label="Enable TPM:"), 0, 5, 1, 1)
         self.check_tpm = Gtk.CheckButton()
         self.check_tpm.set_active(self.config.get("tpm_enabled", False))
-        grid.attach(self.check_tpm, 1, 4, 2, 1)
-        grid.attach(Gtk.Label(label="Display:"), 0, 5, 1, 1)
+        grid.attach(self.check_tpm, 1, 5, 2, 1)
+        grid.attach(Gtk.Label(label="Display:"), 0, 6, 1, 1)
         self.combo_disp = Gtk.ComboBoxText()
         for opt in ["gtk (default)", "virtio", "spice (virtio)", "qemu"]:
             self.combo_disp.append_text(opt)
         self.combo_disp.set_active(0)
         if self.config.get("display") in ["gtk (default)", "virtio", "spice (virtio)", "qemu"]:
             self.combo_disp.set_active(["gtk (default)", "virtio", "spice (virtio)", "qemu"].index(self.config.get("display")))
-        grid.attach(self.combo_disp, 1, 5, 2, 1)
-        grid.attach(Gtk.Label(label="3D Acceleration:"), 0, 6, 1, 1)
+        grid.attach(self.combo_disp, 1, 6, 2, 1)
+        grid.attach(Gtk.Label(label="3D Acceleration:"), 0, 7, 1, 1)
         self.check_3d = Gtk.CheckButton()
         self.check_3d.set_active(self.config.get("3d_acceleration", False))
-        grid.attach(self.check_3d, 1, 6, 2, 1)
+        grid.attach(self.check_3d, 1, 7, 2, 1)
         box.add(grid)
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Apply", Gtk.ResponseType.OK)
@@ -458,12 +463,32 @@ class VMSettingsDialog(Gtk.Dialog):
         if d.run() == Gtk.ResponseType.OK:
             self.entry_iso.set_text(d.get_filename())
         d.destroy()
+
     def get_updated_config(self):
+        new_name = self.entry_name.get_text()
         firmware = "BIOS"
         if self.radio_uefi.get_active():
             firmware = "UEFI"
         elif self.radio_secure.get_active():
             firmware = "UEFI+Secure Boot"
+
+        if new_name != self.original_name:
+            old_conf_file = os.path.join(self.config["path"], f"{self.original_name}.json")
+            new_conf_file = os.path.join(self.config["path"], f"{new_name}.json")
+            old_disk_image = self.config["disk_image"]
+            new_disk_image = os.path.join(self.config["path"], f"{new_name}.img")
+
+            try:
+                if os.path.exists(old_conf_file):
+                    os.rename(old_conf_file, new_conf_file)
+                if os.path.exists(old_disk_image):
+                    os.rename(old_disk_image, new_disk_image)
+                self.config["disk_image"] = new_disk_image
+                self.config["name"] = new_name
+            except Exception as e:
+                show_error_dialog(f"Error renaming VM files: {e}", self)
+                return None
+
         self.config["iso"] = urllib.parse.unquote(self.entry_iso.get_text()) if self.check_iso_enable.get_active() else ""
         self.config["iso_enabled"] = self.check_iso_enable.get_active()
         self.config["cpu"] = self.spin_cpu.get_value_as_int()
@@ -712,7 +737,6 @@ def show_error_dialog(msg, parent):
     dialog.show_all()
     dialog.run()
     dialog.destroy()
-
 
 if __name__ == '__main__':
     win = QEMUManagerMain()
