@@ -98,7 +98,9 @@ python nqg.py
 | Add TPM support                               | ❌      |
 | Add snapshot support                          | ❌      |
 | Add VM Name configuration                     | ✅      |
-| Add support for Debian, Fedora, and SerpentOS | ❌      |
+| Add support for Debian | ❌      |
+| Add support for Fedora | ❌      |
+| Add support for SerpentOS | ❌      |
 | Change the main window to use full space without borders | ❌  |
 | Change window name                            | ❌      |
 | Simplify text                                 | ✅      |
