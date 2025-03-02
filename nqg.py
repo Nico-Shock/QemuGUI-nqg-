@@ -39,18 +39,18 @@ def copy_uefi_files(config, parent_window=None):
                         copied_count += 1
                     except subprocess.CalledProcessError as e_sudo:
                         error_msg = str(e_sudo)
-                        show_error_dialog(f"Error copying UEFI firmware files with Sudo: {error_msg}\n\nPlease check your Sudo password and permissions.", parent_window)
+                        show_error_dialog(f"Error with Sudo: {error_msg}\nCheck password and permissions.", parent_window)
                         return False
                     except Exception as e_sudo_other:
                         error_msg = str(e_sudo_other)
-                        show_error_dialog(f"Unexpected error copying UEFI files with Sudo: {error_msg}\n\nPlease check your Sudo setup and permissions.", parent_window)
+                        show_error_dialog(f"Unexpected error with Sudo: {error_msg}\nCheck setup.", parent_window)
                         return False
                 else:
-                    show_error_dialog("Sudo password required but not entered. Failed to copy UEFI files.", parent_window)
+                    show_error_dialog("Need Sudo password to copy files.", parent_window)
                     return False
             except Exception as e_initial_other:
                 error_msg = str(e_initial_other)
-                show_error_dialog(f"Unexpected error copying UEFI files: {error_msg}\n\nPlease check file permissions and package installation.", parent_window)
+                show_error_dialog(f"Error copying files: {error_msg}\nCheck permissions.", parent_window)
                 return False
 
     if config["firmware"] == "UEFI":
@@ -60,7 +60,7 @@ def copy_uefi_files(config, parent_window=None):
         config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS.4m.fd")
 
     if copied_count == 0 and config["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
-        show_error_dialog(f"No UEFI firmware files found in {src_dir}. \n\nPlease ensure the `edk2-ovmf` package is installed and the files are present in the expected directory.", parent_window)
+        show_error_dialog(f"No files found in {src_dir}.\nInstall `edk2-ovmf`.", parent_window)
         return False
 
     return success
@@ -71,14 +71,14 @@ def delete_ovmf_dir(config):
         try:
             shutil.rmtree(ovmf_dir)
         except Exception as e:
-            show_error_dialog(f"Error deleting OVMF directory: {e}", None)
+            show_error_dialog(f"Error deleting OVMF folder: {e}", None)
             return False
     return True
 
 def build_launch_command(config):
     qemu = shutil.which("qemu-kvm") or shutil.which("qemu-system-x86_64")
     if not qemu:
-        show_error_dialog("QEMU binary not found!", None)
+        show_error_dialog("QEMU not found!", None)
         return None
     cmd = [
         qemu, "-enable-kvm", "-cpu", "host",
@@ -99,7 +99,7 @@ def build_launch_command(config):
     if disp == "gtk (default)":
         cmd.extend(["-display", "gtk,gl=on" if config.get("3d_acceleration", False) else "gtk"])
     elif disp == "virtio":
-        cmd.extend(["-display", "virtio,gl=on" if config.get("3d_acceleration", False) else "virtio"])
+        cmd.extend(["-display", "sdl,gl=on" if config.get("3d_acceleration", False) else "sdl"])
     elif disp == "spice (virtio)":
         cmd.extend(["-display", "spice-app"])
     elif disp == "qemu":
@@ -120,7 +120,7 @@ def build_launch_command(config):
                 "-drive", f"if=pflash,format=raw,file={ovmf_vars_secure}"
             ])
         else:
-            show_error_dialog("Secure Boot firmware files missing!", None)
+            show_error_dialog("Secure Boot files missing!", None)
     if config.get("tpm_enabled", False):
         tpm_dir = os.path.join(config["path"], "tpm")
         os.makedirs(tpm_dir, exist_ok=True)
@@ -158,7 +158,7 @@ def load_all_vm_configs():
                         configs.append(json.load(f))
                     break
         except Exception as e:
-            show_error_dialog(f"Error loading configuration from {vm_path}: {e}", None)
+            show_error_dialog(f"Error loading config from {vm_path}: {e}", None)
     return configs
 
 def save_vm_config(config):
@@ -167,14 +167,14 @@ def save_vm_config(config):
         with open(conf_file, "w") as f:
             json.dump(config, f, indent=4)
     except Exception:
-        show_error_dialog("Error saving VM configuration.\nPlease check your permissions.", None)
+        show_error_dialog("Error saving VM config.\nCheck permissions.", None)
         raise
 
 def prompt_sudo_password(parent):
-    d = Gtk.Dialog(title="Sudo Password Required", transient_for=parent, flags=0)
+    d = Gtk.Dialog(title="Sudo Password", transient_for=parent, flags=0)
     d.add_buttons("OK", Gtk.ResponseType.OK, "Cancel", Gtk.ResponseType.CANCEL)
     box = d.get_content_area()
-    box.add(Gtk.Label(label="Enter your Sudo password to install UEFI files:"))
+    box.add(Gtk.Label(label="Enter Sudo password:"))
     entry = Gtk.Entry()
     entry.set_visibility(False)
     box.add(entry)
@@ -185,8 +185,8 @@ def prompt_sudo_password(parent):
     return pwd
 
 class LoadingDialog(Gtk.Dialog):
-    def __init__(self, parent, msg="Installing OVMF Firmware Files..."):
-        super().__init__(title="Please Wait", transient_for=parent)
+    def __init__(self, parent, msg="Installing OVMF Files..."):
+        super().__init__(title="Wait", transient_for=parent)
         self.set_modal(True)
         self.set_default_size(300,100)
         box = self.get_content_area()
@@ -226,7 +226,7 @@ class ISOSelectDialog(Gtk.Window):
         target = Gtk.TargetEntry.new("text/uri-list", 0, 0)
         drop.drag_dest_set_target_list(Gtk.TargetList.new([target]))
         vbox.pack_start(drop, True, True, 0)
-        vbox.pack_start(Gtk.Label(label="Drag your ISO file here or click '+'"), False, False, 0)
+        vbox.pack_start(Gtk.Label(label="Drag ISO here or click '+'"), False, False, 0)
         self.add(vbox)
     def on_plus_clicked(self, w):
         d = Gtk.FileChooserDialog(title="Select ISO File", parent=self,
@@ -320,7 +320,7 @@ class VMCreateDialog(Gtk.Dialog):
             self.initial_firmware = "UEFI+Secure Boot"
 
     def on_browse(self, w):
-        d = Gtk.FileChooserDialog(title="Select VM Directory", parent=self,
+        d = Gtk.FileChooserDialog(title="Select Folder", parent=self,
                                                         action=Gtk.FileChooserAction.SELECT_FOLDER)
         d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Select", Gtk.ResponseType.OK)
         if d.run() == Gtk.ResponseType.OK:
@@ -355,7 +355,7 @@ class VMCreateDialog(Gtk.Dialog):
                     subprocess.run([qemu_img, "create", "-f", config["disk_type"],
                                                                     config["disk_image"], f"{config['disk']}G"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception as e_img_create:
-                    show_error_dialog(f"Error creating disk image: {e_img_create}", self)
+                    show_error_dialog(f"Error creating disk: {e_img_create}", self)
                     return None
 
         if config["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
@@ -486,7 +486,7 @@ class VMSettingsDialog(Gtk.Dialog):
                 self.config["disk_image"] = new_disk_image
                 self.config["name"] = new_name
             except Exception as e:
-                show_error_dialog(f"Error renaming VM files: {e}", self)
+                show_error_dialog(f"Error renaming files: {e}", self)
                 return None
 
         self.config["iso"] = urllib.parse.unquote(self.entry_iso.get_text()) if self.check_iso_enable.get_active() else ""
@@ -496,14 +496,13 @@ class VMSettingsDialog(Gtk.Dialog):
         if self.config["firmware"] != firmware:
             if firmware in ["UEFI", "UEFI+Secure Boot"]:
                 if not copy_uefi_files(self.config, self):
-                    show_error_dialog("Error copying UEFI firmware files. Please check permissions or installation.", self)
+                    show_error_dialog("Error copying UEFI files.", self)
                     return None
             else:
                 delete_ovmf_dir(self.config)
         self.config["firmware"] = firmware
         self.config["display"] = self.combo_disp.get_active_text()
         self.config["3d_acceleration"] = self.check_3d.get_active()
-        self.config["tpm_enabled"] = self.check_tpm.get_active()
         self.config["launch_cmd"] = build_launch_command(self.config)
         return self.config
 
@@ -521,7 +520,7 @@ class VMCloneDialog(Gtk.Dialog):
         grid.attach(Gtk.Label(label="New VM Name:"), 0, 0, 1, 1)
         self.entry_new_name = Gtk.Entry(text=self.original_vm["name"] + "_clone")
         grid.attach(self.entry_new_name, 1, 0, 2, 1)
-        grid.attach(Gtk.Label(label="New Directory:"), 0, 1, 1, 1)
+        grid.attach(Gtk.Label(label="New Folder:"), 0, 1, 1, 1)
         self.entry_new_path = Gtk.Entry()
         btn = Gtk.Button(label="Browse")
         btn.connect("clicked", self.on_browse)
@@ -532,7 +531,7 @@ class VMCloneDialog(Gtk.Dialog):
         self.add_button("Clone", Gtk.ResponseType.OK)
         self.show_all()
     def on_browse(self, w):
-        d = Gtk.FileChooserDialog(title="Select Destination Folder", parent=self,
+        d = Gtk.FileChooserDialog(title="Select Folder", parent=self,
                                                         action=Gtk.FileChooserAction.SELECT_FOLDER)
         d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Select", Gtk.ResponseType.OK)
         if d.run() == Gtk.ResponseType.OK:
@@ -633,7 +632,7 @@ class QEMUManagerMain(Gtk.Window):
     def create_context_menu(self, vm):
         menu = Gtk.Menu()
         item_start = Gtk.MenuItem(label="Start")
-        item_settings = Gtk.MenuItem(label="Settings")
+        item_settings = Gtk.MenuItem(label="Edit")
         item_delete = Gtk.MenuItem(label="Delete")
         item_clone = Gtk.MenuItem(label="Clone")
         item_start.connect("activate", lambda b, vm=vm: self.start_vm(vm))
@@ -648,7 +647,7 @@ class QEMUManagerMain(Gtk.Window):
         return menu
     def start_vm(self, vm):
         if not vm["launch_cmd"]:
-            show_error_dialog("VM launch command not defined!", self)
+            show_error_dialog("No start command!", self)
             return
         try:
             subprocess.Popen(vm["launch_cmd"])
@@ -667,7 +666,7 @@ class QEMUManagerMain(Gtk.Window):
         dialog = Gtk.Dialog(title="Delete VM?", transient_for=self, flags=0)
         dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Delete", Gtk.ResponseType.OK)
         box = dialog.get_content_area()
-        box.add(Gtk.Label(label=f"Do you really want to delete the VM '{vm['name']}'? \nThis action cannot be undone."))
+        box.add(Gtk.Label(label=f"Delete VM '{vm['name']}' with all its files?"))
         dialog.show_all()
         resp = dialog.run()
         if resp == Gtk.ResponseType.OK:
@@ -690,7 +689,7 @@ class QEMUManagerMain(Gtk.Window):
                 self.vm_configs = load_all_vm_configs()
                 self.refresh_vm_list()
             except Exception as e_del:
-                show_error_dialog(f"Error deleting VM files: {e_del}", self)
+                show_error_dialog(f"Error deleting VM: {e_del}", self)
         dialog.destroy()
     def clone_vm(self, vm):
         clone_dialog = VMCloneDialog(self, vm)
