@@ -100,4 +100,4 @@ python nqg.py
 - Add Support for Debian, Fedora and SerpentOS.
 - Change the main window so that the window uses the whole space without borders.
 - Change window name.
-- Simplify text.  
+- Simplify text.  ✅
