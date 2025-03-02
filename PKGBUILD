@@ -6,7 +6,7 @@ arch=('x86_64')
 url="https://github.com/Nico-Shock/QemuGUI-nqg-"
 depends=('python')
 source=("nqg.py")
-sha256sums=('51f9c621a699d620307dcc8174eaebcc47374d82fe1571200fc09acdcec6099c')
+sha256sums=('0efa83caf5e65153b666cd37dedfb350395ce9186c6fbb83b616ec0a7d0bbacf')
 
 package() {
   install -Dm755 "$srcdir/nqg.py" "$pkgdir/usr/bin/$pkgname"
