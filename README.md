@@ -90,15 +90,16 @@ python nqg.py
 - Sometimes UEFI files won’t copy correctly.
 - Auto installation and setups for UEFI files currently only work properly on Arch based systems.
 
-## Todo:
 
-- Support Secure Boot.
-- Change Virtio Display to SDL with Virtio support.
-- Add TPM support.
-- Add snapshot support.
-- Add  VM Name configuration. ✅
-- Add Support for Debian, Fedora and SerpentOS.
-- Change the main window so that the window uses the whole space without borders.
-- Change window name.
-- Simplify text.  ✅
-- Change title to "Nicos Qemu GUI".  
+| ToDo                                          | Status  |
+|-----------------------------------------------|---------|
+| Support Secure Boot                           | ❌      |
+| Change Virtio Display to SDL with Virtio support | ✅  |
+| Add TPM support                               | ❌      |
+| Add snapshot support                          | ❌      |
+| Add VM Name configuration                     | ✅      |
+| Add support for Debian, Fedora, and SerpentOS | ❌      |
+| Change the main window to use full space without borders | ❌  |
+| Change window name                            | ❌      |
+| Simplify text                                 | ✅      |
+| Change title to "Nicos Qemu GUI"              | ✅      |
