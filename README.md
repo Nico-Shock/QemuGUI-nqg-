@@ -96,6 +96,6 @@ python nqg.py
 - Change Virtio Display to SDL.
 - Add TPM support.
 - Add snapshot support.
-- Add name configuration. ✅
+- Add  VM Name configuration. ✅
 - Add Support for Debian, Fedora and SerpentOS.
 - Change the main window so that the window uses the whole space without borders.
