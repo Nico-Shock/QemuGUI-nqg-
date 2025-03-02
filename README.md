@@ -93,7 +93,7 @@ python nqg.py
 ## Todo:
 
 - Support Secure Boot.
-- Change Virtio Display to SDL.
+- Change Virtio Display to SDL with Virtio support.
 - Add TPM support.
 - Add snapshot support.
 - Add  VM Name configuration. ✅
