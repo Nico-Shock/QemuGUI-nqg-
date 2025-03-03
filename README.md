@@ -105,3 +105,4 @@ python nqg.py
 | Change window name                            | ❌      |
 | Simplify text                                 | ✅      |
 | Change title to "Nicos Qemu GUI"              | ✅      |
+| Add support for Windows             | ❌      |
