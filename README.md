@@ -42,7 +42,7 @@ You should use this program if you want to manage virtual machines with QEMU KVM
 
 ![nqg vm settings](https://github.com/user-attachments/assets/09ce9b3b-ded8-4824-9b2b-975966fa0275)
 
-**Make the GUI look different from whatever your GTK3 theme is or overall theme.**
+**Make sure that the GUI can look different from whatever your GTK3 theme is.**
 
 ## Requirements:
 
