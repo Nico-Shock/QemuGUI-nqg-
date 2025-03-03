@@ -94,6 +94,7 @@ python nqg.py
 - The right click menu only shows up when you right click on the settings icon.
 - Sometimes UEFI files won’t copy correctly.
 - Auto installation and setups for UEFI files currently only work properly on Arch based systems.
+- Only OVMF from Fedora works with Secure Boot, but it is not working on other OSes for now (though it is possible).
 
 
 | ToDo                                          | Status  |
