@@ -32,7 +32,7 @@ You should use this program if you want to manage virtual machines with QEMU KVM
 - After you hit "Create," the VM will appear as a list item in your main menu with a settings button and a play button to boot the VM.
 - You can right click the VM to start it, go to its settings, clone it, or delete it.
 - In the settings, you can change anything that was previously configured.
-- You need to disable the ISO in the settings to boot your OS properly after a fresh install.
+- You may need to disable the ISO in the settings to boot your OS properly after a fresh install.
 
 ### **Screenshots:**
 
