@@ -10,6 +10,8 @@ if not os.path.exists(CONFIG_DIR):
 CONFIG_FILE = os.path.join(CONFIG_DIR, "vms_index.json")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Windows support was added by AI.
+
 def get_host_os():
     if sys.platform == "win32":
         return "windows"
