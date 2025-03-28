@@ -50,7 +50,9 @@ You should use this program if you want to manage virtual machines with QEMU KVM
 - Minimum 8GB of RAM
 - Minimum 4-Core CPU
 
-Needed packages:
+## Needed packages
+
+### Arch Linux
 
 ```
 sudo pacman -S edk2-ovmf python qemu-full
