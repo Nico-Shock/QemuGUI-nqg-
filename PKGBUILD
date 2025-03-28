@@ -8,7 +8,7 @@ depends=('python')
 makedepends=('python')
 optdepends=('qemu')
 source=("nqg.py")
-sha256sums=('c75464e460e5f9d149a02e552cb3a6d1f5ae9c55e2896aa8b0caf371a832c7d2')
+sha256sums=('6a24052067b1db220909391bc6a0361b4acbbde3d53e0e0f58186dc77abdb101')
 pkgver() {
   echo "0.0.2"
 }
