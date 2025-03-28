@@ -10,12 +10,8 @@ if not os.path.exists(CONFIG_DIR):
 CONFIG_FILE = os.path.join(CONFIG_DIR, "vms_index.json")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Windows support was added by AI.
-
 def get_host_os():
-    if sys.platform == "win32":
-        return "windows"
-    elif os.path.exists("/etc/arch-release"):
+    if os.path.exists("/etc/arch-release"):
         return "arch"
     elif os.path.exists("/etc/debian_version"):
         return "debian"
@@ -93,9 +89,7 @@ def delete_ovmf_dir(config):
 
 def build_launch_command(config):
     host = get_host_os()
-    if host == "windows":
-        qemu = shutil.which("qemu-system-x86_64.exe")
-    elif host in ["arch", "serpentos"]:
+    if host in ["arch", "serpentos"]:
         qemu = shutil.which("qemu-kvm") or shutil.which("qemu-system-x86_64")
     elif host in ["fedora", "debian"]:
         qemu = shutil.which("qemu-system-x86_64")
@@ -201,75 +195,6 @@ def delete_snapshot(vm, snap_name):
     except Exception:
         return False
 
-def load_vm_index():
-    if os.path.exists(CONFIG_FILE) and os.path.getsize(CONFIG_FILE) > 0:
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_vm_index(index):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(index, f, indent=4)
-
-def load_all_vm_configs():
-    index = load_vm_index()
-    configs = []
-    for vm_path in index:
-        try:
-            for fname in os.listdir(vm_path):
-                if fname.endswith(".json"):
-                    with open(os.path.join(vm_path, fname), "r") as f:
-                        configs.append(json.load(f))
-                    break
-        except Exception as e:
-            show_error_dialog(f"Error loading config from {vm_path}: {e}", None)
-    return configs
-
-def save_vm_config(config):
-    conf_file = os.path.join(config["path"], f"{config['name']}.json")
-    try:
-        with open(conf_file, "w") as f:
-            json.dump(config, f, indent=4)
-    except Exception:
-        show_error_dialog("Error saving VM config.\nCheck permissions.", None)
-        raise
-
-def prompt_sudo_password(parent):
-    d = Gtk.Dialog(title="Sudo Password", transient_for=parent, flags=0)
-    d.add_buttons("OK", Gtk.ResponseType.OK, "Cancel", Gtk.ResponseType.CANCEL)
-    b = d.get_content_area()
-    b.add(Gtk.Label(label="Enter Sudo password:"))
-    entry = Gtk.Entry()
-    entry.set_visibility(False)
-    b.add(entry)
-    d.show_all()
-    resp = d.run()
-    pwd = entry.get_text() if resp == Gtk.ResponseType.OK else None
-    d.destroy()
-    return pwd
-
-class LoadingDialog(Gtk.Dialog):
-    def __init__(self, parent, msg="Installing OVMF Files..."):
-        super().__init__(title="Please Wait", transient_for=parent)
-        self.set_modal(True)
-        self.set_default_size(300, 100)
-        b = self.get_content_area()
-        b.add(Gtk.Label(label=msg))
-        self.progress = Gtk.ProgressBar()
-        self.progress.set_show_text(False)
-        b.add(self.progress)
-        self.show_all()
-        self.timeout_id = GLib.timeout_add(100, self.on_timeout)
-    def on_timeout(self):
-        self.progress.pulse()
-        return True
-    def destroy(self):
-        GLib.source_remove(self.timeout_id)
-        super().destroy()
-
 class ManageSnapshotsDialog(Gtk.Dialog):
     def __init__(self, parent, vm):
         super().__init__(title="Manage Snapshots", transient_for=parent)
@@ -347,6 +272,7 @@ class ManageSnapshotsDialog(Gtk.Dialog):
                 menu.show_all()
                 menu.popup_at_pointer(event)
             return True
+
     def confirm_delete(self, snap):
         d = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text=f"Delete snapshot '{snap}'?")
         response = d.run()
@@ -385,15 +311,15 @@ def load_all_vm_configs():
 class VMSettingsDialog(Gtk.Dialog):
     def __init__(self, parent, config):
         super().__init__(title="Edit VM Settings", transient_for=parent)
-        self.set_default_size(500, 500)
+        self.set_default_size(500,450)
         self.config = config.copy()
         self.original_name = config["name"]
-        b = self.get_content_area()
+        box = self.get_content_area()
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
-        grid.set_margin_top(0)
-        grid.set_margin_bottom(0)
-        grid.set_margin_start(0)
-        grid.set_margin_end(0)
+        grid.set_margin_top(10)
+        grid.set_margin_bottom(10)
+        grid.set_margin_start(10)
+        grid.set_margin_end(10)
         grid.attach(Gtk.Label(label="VM Name:"), 0, 0, 1, 1)
         self.entry_name = Gtk.Entry()
         self.entry_name.set_text(self.config.get("name", ""))
@@ -409,11 +335,11 @@ class VMSettingsDialog(Gtk.Dialog):
         grid.attach(self.btn_iso_browse, 2, 1, 1, 1)
         grid.attach(self.check_iso_enable, 3, 1, 1, 1)
         grid.attach(Gtk.Label(label="CPU Cores:"), 0, 2, 1, 1)
-        self.spin_cpu = Gtk.SpinButton.new_with_range(1, 32, 1)
+        self.spin_cpu = Gtk.SpinButton.new_with_range(1,32,1)
         self.spin_cpu.set_value(self.config.get("cpu", 2))
         grid.attach(self.spin_cpu, 1, 2, 2, 1)
         grid.attach(Gtk.Label(label="RAM (MiB):"), 0, 3, 1, 1)
-        self.spin_ram = Gtk.SpinButton.new_with_range(256, 131072, 256)
+        self.spin_ram = Gtk.SpinButton.new_with_range(256,131072,256)
         self.spin_ram.set_value(self.config.get("ram", 4096))
         grid.attach(self.spin_ram, 1, 3, 2, 1)
         grid.attach(Gtk.Label(label="Firmware:"), 0, 4, 1, 1)
@@ -447,7 +373,7 @@ class VMSettingsDialog(Gtk.Dialog):
         self.check_3d = Gtk.CheckButton()
         self.check_3d.set_active(self.config.get("3d_acceleration", False))
         grid.attach(self.check_3d, 1, 7, 2, 1)
-        b.add(grid)
+        box.add(grid)
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Apply", Gtk.ResponseType.OK)
         self.show_all()
@@ -511,9 +437,9 @@ class VMSettingsDialog(Gtk.Dialog):
 class VMCloneDialog(Gtk.Dialog):
     def __init__(self, parent, vm_config):
         super().__init__(title="Clone VM", transient_for=parent)
-        self.set_default_size(400, 200)
+        self.set_default_size(400,200)
         self.original_vm = vm_config
-        b = self.get_content_area()
+        box = self.get_content_area()
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
         grid.set_margin_top(10)
         grid.set_margin_bottom(10)
@@ -528,12 +454,13 @@ class VMCloneDialog(Gtk.Dialog):
         btn.connect("clicked", self.on_browse)
         grid.attach(self.entry_new_path, 1, 1, 1, 1)
         grid.attach(btn, 2, 1, 1, 1)
-        b.add(grid)
+        box.add(grid)
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Clone", Gtk.ResponseType.OK)
         self.show_all()
     def on_browse(self, w):
-        d = Gtk.FileChooserDialog(title="Select Folder", parent=self, action=Gtk.FileChooserAction.SELECT_FOLDER)
+        d = Gtk.FileChooserDialog(title="Select Folder", parent=self,
+                                                        action=Gtk.FileChooserAction.SELECT_FOLDER)
         d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, "Select", Gtk.ResponseType.OK)
         if d.run() == Gtk.ResponseType.OK:
             self.entry_new_path.set_text(d.get_filename())
@@ -544,8 +471,7 @@ class VMCloneDialog(Gtk.Dialog):
 class QEMUManagerMain(Gtk.Window):
     def __init__(self):
         super().__init__(title="Nicos Qemu GUI")
-        self.set_name("NicosQemuGUIWindow")
-        self.set_default_size(1000, 700)
+        self.set_default_size(1000,700)
         self.vm_configs = load_all_vm_configs()
         self.build_ui()
         self.apply_css()
@@ -553,6 +479,7 @@ class QEMUManagerMain(Gtk.Window):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
+        self.set_title("Nicos Qemu GUI")
         self.set_titlebar(header)
         btn_add = Gtk.Button(label="+")
         btn_add.connect("clicked", self.on_add_vm)
@@ -604,14 +531,14 @@ class QEMUManagerMain(Gtk.Window):
         hbox.pack_start(label, True, True, 0)
         play_btn = Gtk.Button()
         play_btn.set_relief(Gtk.ReliefStyle.NONE)
-        play_btn.set_size_request(32, 32)
+        play_btn.set_size_request(32,32)
         play_img = Gtk.Image.new_from_icon_name("media-playback-start", Gtk.IconSize.BUTTON)
         play_btn.set_image(play_img)
         play_btn.get_style_context().add_class("round-button")
         play_btn.connect("clicked", lambda b, vm=vm: self.start_vm(vm))
         settings_btn = Gtk.Button()
         settings_btn.set_relief(Gtk.ReliefStyle.NONE)
-        settings_btn.set_size_request(32, 32)
+        settings_btn.set_size_request(32,32)
         set_img = Gtk.Image.new_from_icon_name("preferences-system", Gtk.IconSize.BUTTON)
         settings_btn.set_image(set_img)
         settings_btn.get_style_context().add_class("round-button")
@@ -668,8 +595,8 @@ class QEMUManagerMain(Gtk.Window):
     def delete_vm(self, vm):
         d = Gtk.Dialog(title="Delete VM?", transient_for=self, flags=0)
         d.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Delete", Gtk.ResponseType.OK)
-        b = d.get_content_area()
-        b.add(Gtk.Label(label=f"Delete VM '{vm['name']}' with all its files?"))
+        box = d.get_content_area()
+        box.add(Gtk.Label(label=f"Delete VM '{vm['name']}' with all its files?"))
         d.show_all()
         resp = d.run()
         if resp == Gtk.ResponseType.OK:
@@ -731,8 +658,8 @@ class QEMUManagerMain(Gtk.Window):
 def show_error_dialog(msg, parent):
     d = Gtk.Dialog(title="Error", transient_for=parent, flags=0)
     d.add_buttons("OK", Gtk.ResponseType.OK)
-    b = d.get_content_area()
-    b.add(Gtk.Label(label=msg))
+    box = d.get_content_area()
+    box.add(Gtk.Label(label=msg))
     d.show_all()
     d.run()
     d.destroy()
