@@ -129,6 +129,8 @@ Already integrated:
 Features that are not implemented yet:
 - Detection of the available CPU cores and system RAM.  
 - Graphical error popup with a "Details" button, a small error icon at the bottom left showing terminal logs, a "Report" button on the bottom right linking to the GitHub issues page, and a "Close" button to the left of it.  
+- Fixes Graphics API screen; for example, QEMU default screen is used for SDL.  
+- Greyouts for the misconfigured or unsupported graphics APIs.  
 
 ### Small Info:
 
