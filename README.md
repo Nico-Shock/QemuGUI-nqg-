@@ -111,9 +111,25 @@ python nqg.py
 | Add VM Name configuration                     | ✅      |
 | Add support for Debian | ❌      |
 | Add support for Fedora | ❌      |
-| Add support for SerpentOS | ❌      |
 | Change the main window to use full space without borders | ❌  |
 | Change window name                            | ❌      |
 | Simplify text                                 | ✅      |
 | Change title to "Nicos Qemu GUI"              | ✅      |
-| Add support for Windows             | ❌      |
+
+I'm very close to integrating most things; smaller features like a modern UI, a skip button for the ISO creation screen, or icons. I just need to find the right package for each OS to add support for Secure Boot and UEFI. I removed support for SerpentOS and Windows because nobody uses them and I don't like those OSes. The snapshot integration should work the same with the fix for the right click menu, it should now register right clicks on the entire bar. Here are all the smaller features coming:
+
+Already integrated:
+- more modern UI with rounded corners and compact view  
+- skip button under the ISO creation screen  
+- fluent animation bar with a centered percent view above it for operations like cloning or managing snapshots  
+- fixed right-click menu so you can right-click on the entire bar now  
+- added greyouts to options that aren’t available (e.g. 3D acceleration)  
+- added a recommendation for the graphics APIs  
+
+Features that are not implemented yet:
+- detection of the available CPU cores and system RAM  
+- graphical error popup with a "Details" button, a small error icon at the bottom left showing terminal logs, a "Report" button on the bottom right linking to the GitHub issue page, and a "Close" button to the left of it
+
+### Small Info:
+
+- Please note that I'm still working on these features. They are not publicly accessible yet, so you'll need to wait — but not for long.
