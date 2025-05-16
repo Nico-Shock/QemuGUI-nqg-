@@ -114,7 +114,6 @@ python nqg.py
 | Change the main window to use full space without borders | ❌  |
 | Change window name                            | ❌      |
 | Simplify text                                 | ✅      |
-| Change title to "Nicos Qemu GUI"              | ✅      |
 
 I'm very close to integrating most things; smaller features like a modern UI, a skip button for the ISO creation screen, or icons. I just need to find the right package for each OS to add support for Secure Boot and UEFI. I removed support for SerpentOS and Windows because nobody uses them and I don't like those OSes. The snapshot integration should work the same with the fix for the right click menu, it should now register right clicks on the entire bar. Here are all the smaller features coming:
 
@@ -129,8 +128,9 @@ Already integrated:
 Features that are not implemented yet:
 - Detection of the available CPU cores and system RAM.  
 - Graphical error popup with a "Details" button, a small error icon at the bottom left showing terminal logs, a "Report" button on the bottom right linking to the GitHub issues page, and a "Close" button to the left of it.  
-- Fixes Graphics API screen; for example, QEMU default screen is used for SDL.  
-- Greyouts for the misconfigured or unsupported graphics APIs.  
+- Fixes to the Graphics API screen; for example, the QEMU default screen is used for SDL.  
+- Greyouts for misconfigured or unsupported graphics APIs.  
+- Feature to double click a list item in the GUI to jump directly to the correct VM window. 
 
 ### Small Info:
 
