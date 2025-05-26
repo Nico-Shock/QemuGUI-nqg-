@@ -100,7 +100,7 @@ python nqg.py
 - Sometimes UEFI files won’t copy correctly.
 - Auto installation and setups for UEFI files currently only work properly on Arch based systems.
 - Only OVMF from Fedora works with Secure Boot, but it is not working on other OSes for now (though it is possible).
-– Animation bar is not implemented yet.
+- Animation bar is not implemented yet.
 
 
 | ToDo                                          | Status  |
