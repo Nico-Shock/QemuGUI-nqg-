@@ -119,17 +119,16 @@ python nqg.py
 Already integrated:
 - A more modern UI with rounded corners and a compact view.  
 - A skip button below the ISO creation screen.  
-- A fluent animation bar with a centered percentage display above it for operations like cloning or managing snapshots.  
+- Graphical error popup with a "Details" button, a small error icon at the bottom left showing terminal logs, a "Report" button on the bottom right linking to the GitHub issues page, and a "Close" button to the left of it.  
 - Added greyouts for options that aren’t available (e.g., 3D acceleration).  
 - Added a recommendation for the graphics APIs.
 - Detection of the available CPU cores and system RAM.  
 
 Features that are not implemented yet:
-- Graphical error popup with a "Details" button, a small error icon at the bottom left showing terminal logs, a "Report" button on the bottom right linking to the GitHub issues page, and a "Close" button to the left of it.  
 - Fixes to the Graphics API screen; for example, the QEMU default screen is used for SDL.  
 - Greyouts for misconfigured or unsupported graphics APIs.  
 - Feature to double click a list item in the GUI to jump directly to the correct VM window.
-
+- A fluent animation bar with a centered percentage display above it for operations like cloning or managing snapshots.
 
 ### Small Info:
 
