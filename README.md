@@ -100,6 +100,7 @@ python nqg.py
 - Sometimes UEFI files won’t copy correctly.
 - Auto installation and setups for UEFI files currently only work properly on Arch based systems.
 - Only OVMF from Fedora works with Secure Boot, but it is not working on other OSes for now (though it is possible).
+– Animation bar is not implemented yet.
 
 
 | ToDo                                          | Status  |
@@ -114,8 +115,6 @@ python nqg.py
 | Change the main window to use full space without borders | ❌  |
 | Change window name                            | ❌      |
 | Simplify text                                 | ✅      |
-
-I'm very close to integrating most things; smaller features like a modern UI, a skip button for the ISO creation screen, or icons. I just need to find the right package for each OS to add support for Secure Boot and UEFI. I removed support for SerpentOS and Windows because nobody uses them and I don't like those OSes. The snapshot integration should work the same with the fix for the right click menu, it should now register right clicks on the entire bar. Here are all the smaller features coming:
 
 Already integrated:
 - A more modern UI with rounded corners and a compact view.  
