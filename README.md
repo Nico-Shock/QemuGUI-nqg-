@@ -34,7 +34,7 @@ You should use this program if you want to manage virtual machines with QEMU KVM
 - In the settings, you can change anything that was previously configured.
 - You may need to disable the ISO in the settings to boot your OS properly after a fresh install.
 
-### **Screenshots:**
+### **Screenshots (OUTDATED):**
 
 ![nqg main](https://github.com/user-attachments/assets/6a910865-18cd-465e-8896-4651bb1f221b)
 
@@ -43,6 +43,7 @@ You should use this program if you want to manage virtual machines with QEMU KVM
 ![nqg vm settings](https://github.com/user-attachments/assets/09ce9b3b-ded8-4824-9b2b-975966fa0275)
 
 **Make sure that the GUI can look different from whatever your GTK3 theme is.**
+
 **Pictures are outdated, please wait another 10 years.**
 
 ## Requirements:
