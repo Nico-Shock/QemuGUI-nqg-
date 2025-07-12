@@ -13,6 +13,21 @@ from gi.repository import Gtk, Gdk, GLib
 import webbrowser
 import psutil
 
+def find_ovmf_source_dir():
+    candidates = [
+        "/usr/share/edk2-ovmf/x64",
+        "/usr/share/edk2-ovmf",
+        "/usr/share/edk2/ovmf",
+        "/usr/share/ovmf",
+        "/usr/share/edk2"
+    ]
+    for d in candidates:
+        if os.path.isdir(d):
+            files = os.listdir(d)
+            if any(f.startswith("OVMF_CODE") for f in files):
+                return d
+    return None
+
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".nqg")
 if not os.path.exists(CONFIG_DIR):
     os.makedirs(CONFIG_DIR)
@@ -34,63 +49,65 @@ def get_host_os():
     else:
         return "other"
 
-def find_ovmf_source_dir():
-    candidates = [
-        "/usr/share/edk2-ovmf/x64",
-        "/usr/share/edk2-ovmf",
-        "/usr/share/edk2/ovmf",
-        "/usr/share/ovmf",
-        "/usr/share/edk2"
-    ]
-    for d in candidates:
-        if os.path.isdir(d):
-            return d
-    return None
-
 def copy_uefi_files(config, parent_window=None):
     dialog = LoadingDialog(parent_window)
     def copy_thread():
+        host_os = get_host_os()
         ovmf_dir = os.path.join(config["path"], "ovmf")
         os.makedirs(ovmf_dir, exist_ok=True)
         src_dir = find_ovmf_source_dir()
         if not src_dir:
             GLib.idle_add(show_detailed_error_dialog, "OVMF folder not found.", "No valid OVMF source directory detected.", parent_window)
+            GLib.idle_add(dialog.destroy)
             return False
         firmware = config.get("firmware", "")
-        if firmware == "UEFI":
-            files = ["OVMF_CODE.fd", "OVMF_CODE_4M.fd"]
-        elif firmware == "UEFI+Secure Boot":
-            files = ["OVMF_CODE.fd", "OVMF_VARS.fd", "OVMF_CODE_4M.fd", "OVMF_VARS_4M.fd"]
+        if host_os == "arch":
+            if firmware == "UEFI":
+                files = ["OVMF_CODE_4M.fd"]
+            elif firmware == "UEFI+Secure Boot":
+                files = ["OVMF_CODE_4M.fd", "OVMF_VARS_4M.fd"]
+            else:
+                files = []
         else:
-            return True
-        found = []
+            if firmware == "UEFI":
+                files = ["OVMF_CODE.fd"]
+            elif firmware == "UEFI+Secure Boot":
+                files = ["OVMF_CODE.fd", "OVMF_VARS.fd"]
+            else:
+                files = []
         for f in files:
             src = os.path.join(src_dir, f)
+            dst = os.path.join(ovmf_dir, f)
             if os.path.exists(src):
-                dst = os.path.join(ovmf_dir, f)
                 try:
                     shutil.copy(src, dst)
                     logging.info(f"Copied {src} to {dst}")
-                    found.append(f)
-                except OSError:
+                except Exception as e:
+                    logging.error(f"Copy failed {src} to {dst}: {e}")
                     pwd = prompt_sudo_password(parent_window)
-                    if not pwd:
-                        return False
-                    cmd = f"echo {pwd} | sudo -S cp '{src}' '{dst}'"
-                    subprocess.run(cmd, shell=True, check=False)
-                    found.append(f)
+                    if pwd:
+                        cmd = f"echo {pwd} | sudo -S cp '{src}' '{dst}'"
+                        subprocess.run(cmd, shell=True)
+            else:
+                logging.warning(f"Source file {src} does not exist.")
+        # Set config paths based on copied files
         if firmware == "UEFI":
-            if found:
-                config["ovmf_code"] = os.path.join(ovmf_dir, found[0])
+            if host_os == "arch":
+                config["ovmf_code"] = os.path.join(ovmf_dir, "OVMF_CODE_4M.fd")
+            else:
+                config["ovmf_code"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
         elif firmware == "UEFI+Secure Boot":
-            if len(found) >= 2:
-                config["ovmf_code_secure"] = os.path.join(ovmf_dir, found[0])
-                config["ovmf_vars_secure"] = os.path.join(ovmf_dir, found[1])
+            if host_os == "arch":
+                config["ovmf_code_secure"] = os.path.join(ovmf_dir, "OVMF_CODE_4M.fd")
+                config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS_4M.fd")
+            else:
+                config["ovmf_code_secure"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
+                config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS.fd")
         GLib.idle_add(dialog.destroy)
         return True
     threading.Thread(target=copy_thread, daemon=True).start()
     dialog.run()
-    return copy_thread.__closure__[0].cell_contents
+    return True
 
 def delete_ovmf_dir(config):
     d = os.path.join(config["path"], "ovmf")
@@ -247,8 +264,17 @@ def prompt_sudo_password(parent):
     return pwd
 
 def show_detailed_error_dialog(message, details, parent):
-    dlg = Gtk.MessageDialog(transient_for=parent, flags=0, message_type=Gtk.MessageType.ERROR, buttons=Gtk.ButtonsType.OK, text=message)
-    dlg.format_secondary_text(details)
+    dlg = Gtk.Dialog(title="Error", transient_for=parent, flags=0)
+    dlg.add_button("OK", Gtk.ResponseType.OK)
+    box = dlg.get_content_area()
+    box.set_spacing(10)
+    box.add(Gtk.Label(label=message))
+    exp = Gtk.Expander(label="Details")
+    exp.set_expanded(False)
+    exp_content = Gtk.Label(label=details)
+    exp.add(exp_content)
+    box.add(exp)
+    dlg.show_all()
     dlg.run()
     dlg.destroy()
 
@@ -506,8 +532,6 @@ class VMCreateDialog(Gtk.Dialog):
                 logging.error("qemu-img not found for disk creation")
                 return None
         if config["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
-            ovmf_dir = os.path.join(config["path"], "ovmf")
-            os.makedirs(ovmf_dir, exist_ok=True)
             if not copy_uefi_files(config, self):
                 show_detailed_error_dialog("Failed to copy UEFI files. Using BIOS firmware.", "Check OVMF installation.", self)
                 logging.warning("Failed to copy UEFI files, falling back to BIOS")
