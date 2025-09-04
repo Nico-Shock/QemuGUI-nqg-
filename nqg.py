@@ -18,13 +18,15 @@ def find_ovmf_source_dir():
         "/usr/share/edk2-ovmf/x64",
         "/usr/share/edk2-ovmf",
         "/usr/share/edk2/ovmf",
+        "/usr/share/OVMF",
         "/usr/share/ovmf",
+        "/usr/share/qemu",
         "/usr/share/edk2"
     ]
     for d in candidates:
         if os.path.isdir(d):
             files = os.listdir(d)
-            if any(f.startswith("OVMF_CODE") for f in files):
+            if any(f.startswith("OVMF_CODE") for f in files) or any(f.endswith(".secboot.fd") for f in files):
                 return d
     return None
 
@@ -50,63 +52,54 @@ def get_host_os():
         return "other"
 
 def copy_uefi_files(config, parent_window=None):
-    dialog = LoadingDialog(parent_window)
-    def copy_thread():
-        host_os = get_host_os()
-        ovmf_dir = os.path.join(config["path"], "ovmf")
-        os.makedirs(ovmf_dir, exist_ok=True)
-        src_dir = find_ovmf_source_dir()
-        if not src_dir:
-            GLib.idle_add(show_detailed_error_dialog, "OVMF folder not found.", "No valid OVMF source directory detected.", parent_window)
-            GLib.idle_add(dialog.destroy)
-            return False
-        firmware = config.get("firmware", "")
-        if host_os == "arch":
-            if firmware == "UEFI":
-                files = ["OVMF_CODE_4M.fd"]
-            elif firmware == "UEFI+Secure Boot":
-                files = ["OVMF_CODE_4M.fd", "OVMF_VARS_4M.fd"]
-            else:
-                files = []
+    host_os = get_host_os()
+    ovmf_dir = os.path.join(config["path"], "ovmf")
+    os.makedirs(ovmf_dir, exist_ok=True)
+    src_dir = find_ovmf_source_dir()
+    if not src_dir:
+        GLib.idle_add(show_detailed_error_dialog, "OVMF folder not found.", "No valid OVMF source directory detected. Please install 'edk2-ovmf'.", parent_window)
+        return False
+
+    firmware = config.get("firmware", "")
+    files_to_copy = {}
+
+    if host_os == "arch":
+        files_to_copy["UEFI"] = {"OVMF_CODE_4M.fd": "OVMF_CODE.fd"}
+        files_to_copy["UEFI+Secure Boot"] = {"OVMF_CODE_4M.fd": "OVMF_CODE.fd", "OVMF_VARS_4M.fd": "OVMF_VARS.fd"}
+    elif host_os == "fedora":
+        files_to_copy["UEFI"] = {"OVMF_CODE.fd": "OVMF_CODE.fd"}
+        files_to_copy["UEFI+Secure Boot"] = {"OVMF_CODE.secboot.fd": "OVMF_CODE.fd", "OVMF_VARS.fd": "OVMF_VARS.fd"}
+    else:
+        files_to_copy["UEFI"] = {"OVMF_CODE.fd": "OVMF_CODE.fd"}
+        files_to_copy["UEFI+Secure Boot"] = {"OVMF_CODE.fd": "OVMF_CODE.fd", "OVMF_VARS.fd": "OVMF_VARS.fd"}
+
+    selected_files = files_to_copy.get(firmware, {})
+
+    for src_name, dst_name in selected_files.items():
+        src = os.path.join(src_dir, src_name)
+        dst = os.path.join(ovmf_dir, dst_name)
+        if os.path.exists(src):
+            try:
+                shutil.copy(src, dst)
+                logging.info(f"Copied {src} to {dst}")
+            except Exception as e:
+                logging.error(f"Copy failed {src} to {dst}: {e}")
+                GLib.idle_add(show_detailed_error_dialog, f"Failed to copy UEFI file: {src_name}", str(e), parent_window)
+                return False
         else:
-            if firmware == "UEFI":
-                files = ["OVMF_CODE.fd"]
-            elif firmware == "UEFI+Secure Boot":
-                files = ["OVMF_CODE.fd", "OVMF_VARS.fd"]
-            else:
-                files = []
-        for f in files:
-            src = os.path.join(src_dir, f)
-            dst = os.path.join(ovmf_dir, f)
-            if os.path.exists(src):
-                try:
-                    shutil.copy(src, dst)
-                    logging.info(f"Copied {src} to {dst}")
-                except Exception as e:
-                    logging.error(f"Copy failed {src} to {dst}: {e}")
-                    pwd = prompt_sudo_password(parent_window)
-                    if pwd:
-                        cmd = f"echo {pwd} | sudo -S cp '{src}' '{dst}'"
-                        subprocess.run(cmd, shell=True)
-            else:
-                logging.warning(f"Source file {src} does not exist.")
-        # Set config paths based on copied files
-        if firmware == "UEFI":
-            if host_os == "arch":
-                config["ovmf_code"] = os.path.join(ovmf_dir, "OVMF_CODE_4M.fd")
-            else:
-                config["ovmf_code"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
-        elif firmware == "UEFI+Secure Boot":
-            if host_os == "arch":
-                config["ovmf_code_secure"] = os.path.join(ovmf_dir, "OVMF_CODE_4M.fd")
-                config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS_4M.fd")
-            else:
-                config["ovmf_code_secure"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
-                config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS.fd")
-        GLib.idle_add(dialog.destroy)
-        return True
-    threading.Thread(target=copy_thread, daemon=True).start()
-    dialog.run()
+            logging.warning(f"Source file {src} does not exist.")
+            GLib.idle_add(show_detailed_error_dialog, "UEFI source file not found.", f"File not found: {src}", parent_window)
+            return False
+
+    if firmware == "UEFI":
+        config["ovmf_code"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
+        config.pop("ovmf_code_secure", None)
+        config.pop("ovmf_vars_secure", None)
+    elif firmware == "UEFI+Secure Boot":
+        config["ovmf_code_secure"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
+        config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS.fd")
+        config.pop("ovmf_code", None)
+
     return True
 
 def delete_ovmf_dir(config):
@@ -116,8 +109,8 @@ def delete_ovmf_dir(config):
             shutil.rmtree(d)
             logging.info(f"Deleted {d}")
             return True
-        except OSError:
-            show_detailed_error_dialog("Error deleting OVMF folder.", "", None)
+        except OSError as e:
+            show_detailed_error_dialog("Error deleting OVMF folder.", str(e), None)
             return False
     return True
 
@@ -130,23 +123,22 @@ def validate_vm_config(vm):
         return False
     if vm["firmware"] == "UEFI+Secure Boot":
         if not os.path.exists(vm.get("ovmf_code_secure", "")) or not os.path.exists(vm.get("ovmf_vars_secure", "")):
-            show_detailed_error_dialog("Secure Boot files missing.", "", None)
+            show_detailed_error_dialog("Secure Boot files missing.", f"Code: {vm.get('ovmf_code_secure', '')}\nVars: {vm.get('ovmf_vars_secure', '')}", None)
             return False
-    if vm.get("iso_enabled") and vm.get("iso") and not os.path.exists(urllib.parse.unquote(vm["iso"])):
+    if vm.get("iso_enabled") and vm.get("iso") and not os.path.exists(vm["iso"]):
         show_detailed_error_dialog("ISO file missing.", vm["iso"], None)
         return False
     if vm.get("tpm_enabled"):
         if not shutil.which("swtpm"):
-            show_detailed_error_dialog("TPM emulator not found.", "", None)
+            show_detailed_error_dialog("TPM emulator 'swtpm' not found.", "Please install swtpm package.", None)
             return False
     return True
 
 def build_launch_command(config):
-    host = get_host_os()
-    arch = config.get("arch", "x86_64")
+    arch = "x86_64"
     qemu = shutil.which(f"qemu-system-{arch}")
     if not qemu:
-        show_detailed_error_dialog("QEMU not found!", "", None)
+        show_detailed_error_dialog("QEMU not found!", f"qemu-system-{arch} is not in your PATH.", None)
         return None
     cmd = [qemu, "-enable-kvm", "-cpu", "host", "-smp", str(config["cpu"]), "-m", str(config["ram"]), "-drive", f"file={config['disk_image']},format={config['disk_type']},if=virtio", "-boot", "order=dc,menu=off", "-usb", "-device", "usb-tablet", "-netdev", "user,id=net0,hostfwd=tcp::5555-:22", "-device", "virtio-net-pci,netdev=net0"]
     if config.get("3d_acceleration"):
@@ -166,17 +158,21 @@ def build_launch_command(config):
     elif disp == "qemu":
         cmd += ["-display", "none"]
     if config.get("iso_enabled") and config.get("iso"):
-        cmd += ["-cdrom", urllib.parse.unquote(config["iso"])]
+        cmd += ["-cdrom", config["iso"]]
     if config["firmware"] == "UEFI" and config.get("ovmf_code"):
         cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={config['ovmf_code']}"]
-    if config["firmware"] == "UEFI+Secure Boot":
+    if config["firmware"] == "UEFI+Secure Boot" and config.get("ovmf_code_secure") and config.get("ovmf_vars_secure"):
         cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={config.get('ovmf_code_secure','')}", "-drive", f"if=pflash,format=raw,file={config.get('ovmf_vars_secure','')}"]
     if config.get("tpm_enabled"):
         tpm_dir = os.path.join(config["path"], "tpm")
         os.makedirs(tpm_dir, exist_ok=True)
         sock = os.path.join(tpm_dir, "swtpm-sock")
-        subprocess.Popen(["swtpm", "socket", "--tpm2", "--tpmstate", f"dir={tpm_dir}", "--ctrl", f"type=unixio,path={sock}", "--log", "level=0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        cmd += ["-chardev", f"socket,id=chrtpm,path={sock}", "-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-tis,tpmdev=tpm0"]
+        try:
+            subprocess.Popen(["swtpm", "socket", "--tpm2", "--tpmstate", f"dir={tpm_dir}", "--ctrl", f"type=unixio,path={sock}", "--log", "level=0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            cmd += ["-chardev", f"socket,id=chrtpm,path={sock}", "-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-tis,tpmdev=tpm0"]
+        except FileNotFoundError:
+             show_detailed_error_dialog("swtpm not found.", "TPM cannot be enabled.", None)
+             config["tpm_enabled"] = False
     logging.info("Built launch command: " + " ".join(cmd))
     return cmd
 
@@ -185,48 +181,55 @@ def list_snapshots(vm):
     if not qi or not os.path.exists(vm["disk_image"]):
         return []
     try:
-        out = subprocess.check_output([qi, "snapshot", "-l", vm["disk_image"]], universal_newlines=True, stderr=subprocess.DEVNULL)
-        snaps = [line.split()[1] for line in out.splitlines()[2:] if line and line.split()[0].isdigit()]
+        out = subprocess.check_output([qi, "snapshot", "-l", vm["disk_image"]], universal_newlines=True, stderr=subprocess.PIPE)
+        lines = out.splitlines()
+        if len(lines) < 2:
+            return []
+        snaps = [line.split()[1] for line in lines[2:] if line and line.strip() and line.split()[0].isdigit()]
         return snaps
-    except:
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to list snapshots for {vm['name']}: {e.stderr}")
         return []
 
 def create_snapshot_cmd(vm, snap_name):
     qi = shutil.which("qemu-img")
     if not qi or not snap_name or re.search(r'[<>:"/\\|?*]', snap_name):
-        return False
+        return False, "Invalid snapshot name or qemu-img not found."
     try:
-        subprocess.run([qi, "snapshot", "-c", snap_name, vm["disk_image"]], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except:
-        return False
+        subprocess.run([qi, "snapshot", "-c", snap_name, vm["disk_image"]], check=True, capture_output=True, text=True)
+        return True, "Snapshot created successfully."
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to create snapshot '{snap_name}': {e.stderr}")
+        return False, e.stderr
 
-def restore_snapshot(vm, snap_name):
+def restore_snapshot_cmd(vm, snap_name):
     qi = shutil.which("qemu-img")
     if not qi:
-        return False
+        return False, "qemu-img not found."
     try:
-        subprocess.run([qi, "snapshot", "-a", snap_name, vm["disk_image"]], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except:
-        return False
+        subprocess.run([qi, "snapshot", "-a", snap_name, vm["disk_image"]], check=True, capture_output=True, text=True)
+        return True, f"Snapshot '{snap_name}' restored."
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to restore snapshot '{snap_name}': {e.stderr}")
+        return False, e.stderr
 
-def delete_snapshot(vm, snap_name):
+def delete_snapshot_cmd(vm, snap_name):
     qi = shutil.which("qemu-img")
     if not qi:
-        return False
+        return False, "qemu-img not found."
     try:
-        subprocess.run([qi, "snapshot", "-d", snap_name, vm["disk_image"]], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except:
-        return False
+        subprocess.run([qi, "snapshot", "-d", snap_name, vm["disk_image"]], check=True, capture_output=True, text=True)
+        return True, f"Snapshot '{snap_name}' deleted."
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to delete snapshot '{snap_name}': {e.stderr}")
+        return False, e.stderr
 
 def load_vm_index():
     if os.path.exists(CONFIG_FILE) and os.path.getsize(CONFIG_FILE) > 0:
         try:
             with open(CONFIG_FILE) as f:
                 return json.load(f)
-        except:
+        except json.JSONDecodeError:
             return []
     return []
 
@@ -236,12 +239,25 @@ def save_vm_index(index):
 
 def load_all_vm_configs():
     configs = []
-    for p in load_vm_index():
+    index = load_vm_index()
+    valid_paths = []
+    for p in index:
+        if not os.path.isdir(p):
+            continue
+        config_found = False
         for fn in os.listdir(p):
             if fn.endswith(".json"):
-                with open(os.path.join(p, fn)) as f:
-                    configs.append(json.load(f))
-                break
+                try:
+                    with open(os.path.join(p, fn)) as f:
+                        configs.append(json.load(f))
+                    config_found = True
+                    break
+                except (json.JSONDecodeError, KeyError):
+                    logging.warning(f"Could not load or parse config in {p}")
+        if config_found:
+            valid_paths.append(p)
+    if len(valid_paths) != len(index):
+        save_vm_index(valid_paths)
     return configs
 
 def save_vm_config(config):
@@ -249,52 +265,72 @@ def save_vm_config(config):
     with open(fn, "w") as f:
         json.dump(config, f, indent=4)
 
-def prompt_sudo_password(parent):
-    d = Gtk.Dialog(title="Sudo Password", transient_for=parent, flags=0)
-    d.add_buttons("OK", Gtk.ResponseType.OK, "Cancel", Gtk.ResponseType.CANCEL)
-    box = d.get_content_area()
-    box.add(Gtk.Label("Enter Sudo password:"))
-    e = Gtk.Entry()
-    e.set_visibility(False)
-    box.add(e)
-    d.show_all()
-    resp = d.run()
-    pwd = e.get_text() if resp == Gtk.ResponseType.OK else None
-    d.destroy()
-    return pwd
+def show_info_dialog(message, details, parent):
+    dlg = Gtk.MessageDialog(transient_for=parent, flags=0, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text=message)
+    dlg.set_secondary_text(details)
+    dlg.run()
+    dlg.destroy()
 
 def show_detailed_error_dialog(message, details, parent):
     dlg = Gtk.Dialog(title="Error", transient_for=parent, flags=0)
     dlg.add_button("OK", Gtk.ResponseType.OK)
     box = dlg.get_content_area()
     box.set_spacing(10)
+    box.set_margin_top(10)
+    box.set_margin_bottom(10)
+    box.set_margin_start(10)
+    box.set_margin_end(10)
     box.add(Gtk.Label(label=message))
-    exp = Gtk.Expander(label="Details")
-    exp.set_expanded(False)
-    exp_content = Gtk.Label(label=details)
-    exp.add(exp_content)
-    box.add(exp)
+    if details:
+        exp = Gtk.Expander(label="Details")
+        exp.set_expanded(False)
+        exp_content = Gtk.Label(label=details)
+        exp_content.set_selectable(True)
+        exp_content.set_line_wrap(True)
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.add(exp_content)
+        scrolled.set_min_content_height(100)
+        exp.add(scrolled)
+        box.add(exp)
     dlg.show_all()
     dlg.run()
     dlg.destroy()
 
-class LoadingDialog(Gtk.Dialog):
-    def __init__(self, parent, msg="Processing..."):
-        super().__init__(title="Wait", transient_for=parent)
+class ProgressDialog(Gtk.Dialog):
+    def __init__(self, parent, title="Processing..."):
+        super().__init__(title=title, transient_for=parent)
         self.set_modal(True)
-        self.set_default_size(300,100)
+        self.set_default_size(350, 120)
+        self.set_resizable(False)
         box = self.get_content_area()
-        box.add(Gtk.Label(msg))
+        box.set_spacing(10)
+        box.set_margin_top(20)
+        box.set_margin_bottom(20)
+        box.set_margin_start(20)
+        box.set_margin_end(20)
+        self.label = Gtk.Label(label=title)
+        box.add(self.label)
         self.progress = Gtk.ProgressBar()
+        self.progress.set_text("0%")
+        self.progress.set_show_text(True)
         box.add(self.progress)
         self.show_all()
-        self.timeout_id = GLib.timeout_add(100, self.on_timeout)
-    def on_timeout(self):
-        self.progress.pulse()
+
+    def update(self, fraction, text):
+        self.progress.set_fraction(fraction)
+        if text:
+            self.progress.set_text(text)
         return True
-    def destroy(self):
-        GLib.source_remove(self.timeout_id)
-        super().destroy()
+
+    def pulse(self, text):
+        self.progress.pulse()
+        if text:
+             self.progress.set_text(text)
+        return True
+
+    def set_text(self, text):
+        self.label.set_text(text)
 
 class ISOSelectDialog(Gtk.Window):
     def __init__(self, parent):
@@ -341,18 +377,22 @@ class ISOSelectDialog(Gtk.Window):
     def on_drag_received(self, w, dc, x, y, data, info, time):
         uris = data.get_uris()
         if uris:
-            self.iso_chosen(uris[0].replace("file://", "").strip())
+            self.iso_chosen(urllib.parse.unquote(uris[0].replace("file://", "").strip()))
     def on_skip_clicked(self, w):
         self.destroy()
         d = VMCreateDialog(self.parent)
         if d.run() == Gtk.ResponseType.OK:
-            self.parent.add_vm(d.get_vm_config())
+            config = d.get_vm_config()
+            if config:
+                self.parent.add_vm(config)
         d.destroy()
     def iso_chosen(self, iso_path):
         self.destroy()
         d = VMCreateDialog(self.parent, iso_path)
         if d.run() == Gtk.ResponseType.OK:
-            self.parent.add_vm(d.get_vm_config())
+            config = d.get_vm_config()
+            if config:
+                self.parent.add_vm(config)
         d.destroy()
 
 class VMCreateDialog(Gtk.Dialog):
@@ -373,6 +413,7 @@ class VMCreateDialog(Gtk.Dialog):
         grid.attach(self.entry_name, 1, 0, 2, 1)
         grid.attach(Gtk.Label(label="Virtual Machine Directory:"), 0, 1, 1, 1)
         self.entry_path = Gtk.Entry()
+        self.entry_path.set_text(os.path.join(os.path.expanduser("~"), "nqg_vms"))
         self.entry_path.set_tooltip_text("Select a directory to store VM files")
         btn = Gtk.Button(label="Browse")
         btn.set_tooltip_text("Choose a directory")
@@ -433,43 +474,26 @@ class VMCreateDialog(Gtk.Dialog):
         self.check_3d = Gtk.CheckButton()
         self.check_3d.set_tooltip_text("Enable 3D graphics acceleration")
         grid.attach(self.check_3d, 1, 9, 2, 1)
-        grid.attach(Gtk.Label(label="Architecture:"), 0, 10, 1, 1)
-        self.combo_arch = Gtk.ComboBoxText()
-        for arch in ["x86_64", "aarch64", "riscv64"]:
-            self.combo_arch.append_text(arch)
-        self.combo_arch.set_active(0)
-        self.combo_arch.set_tooltip_text("Select CPU architecture")
-        grid.attach(self.combo_arch, 1, 10, 2, 1)
         box.add(grid)
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Create", Gtk.ResponseType.OK)
         self.show_all()
         self.on_display_changed(self.combo_disp)
-        self.initial_firmware = "BIOS"
-        if self.radio_uefi.get_active():
-            self.initial_firmware = "UEFI"
-        elif self.radio_secure.get_active():
-            self.initial_firmware = "UEFI+Secure Boot"
-
     def on_display_changed(self, combo):
-        selected = combo.get_active_text()
-        if selected == "gtk (default)":
+        selected = combo.get_active_text().lower()
+        if "gtk" in selected or "sdl" in selected:
             self.recommend_label.set_text("Recommended for Linux")
             self.check_3d.set_sensitive(True)
-        elif selected == "sdl":
-            self.recommend_label.set_text("Recommended for Linux")
-            self.check_3d.set_sensitive(True)
-        elif selected == "spice (virtio)":
+        elif "spice" in selected:
             self.recommend_label.set_text("Recommended for Windows")
             self.check_3d.set_sensitive(True)
-        elif selected == "virtio":
+        elif "virtio" in selected:
             self.recommend_label.set_text("Optimized for Windows with 3D")
             self.check_3d.set_sensitive(True)
-        elif selected == "qemu":
-            self.recommend_label.set_text("")
+        elif "qemu" in selected:
+            self.recommend_label.set_text("Headless mode")
             self.check_3d.set_sensitive(False)
             self.check_3d.set_active(False)
-
     def on_browse(self, w):
         d = Gtk.FileChooserDialog(title="Select Folder", parent=self,
                                   action=Gtk.FileChooserAction.SELECT_FOLDER)
@@ -477,7 +501,6 @@ class VMCreateDialog(Gtk.Dialog):
         if d.run() == Gtk.ResponseType.OK:
             self.entry_path.set_text(d.get_filename())
         d.destroy()
-
     def get_vm_config(self):
         name = self.entry_name.get_text()
         if not name or re.search(r'[<>:"/\\|?*]', name):
@@ -485,47 +508,43 @@ class VMCreateDialog(Gtk.Dialog):
             logging.error(f"Invalid VM name: {name}")
             return None
         path = self.entry_path.get_text()
-        if not path or not os.path.isdir(path) or not os.access(path, os.W_OK):
-            show_detailed_error_dialog("Invalid directory.", "Directory does not exist or is not writable.", self)
+        if not path:
+            show_detailed_error_dialog("Invalid directory.", "Directory path cannot be empty.", self)
+            return None
+        os.makedirs(path, exist_ok=True)
+        if not os.access(path, os.W_OK):
+            show_detailed_error_dialog("Directory not writable.", f"Cannot write to the directory: {path}", self)
             logging.error(f"Invalid directory: {path}")
             return None
         total_mem = psutil.virtual_memory().total // (1024 * 1024)
         ram = self.spin_ram.get_value_as_int()
-        if ram > total_mem:
-            show_detailed_error_dialog("Invalid RAM.", f"RAM ({ram} MiB) exceeds available memory ({total_mem} MiB).", self)
+        if ram >= total_mem:
+            show_detailed_error_dialog("Invalid RAM.", f"RAM ({ram} MiB) is too close to or exceeds available host memory ({total_mem} MiB).", self)
             logging.error(f"RAM {ram} MiB exceeds available {total_mem} MiB")
             return None
         firmware = "BIOS"
-        if self.radio_uefi.get_active():
-            firmware = "UEFI"
-        elif self.radio_secure.get_active():
-            firmware = "UEFI+Secure Boot"
+        if self.radio_uefi.get_active(): firmware = "UEFI"
+        elif self.radio_secure.get_active(): firmware = "UEFI+Secure Boot"
         config = {
-            "name": name,
-            "path": path,
-            "cpu": self.spin_cpu.get_value_as_int(),
-            "ram": ram,
-            "disk": self.spin_disk.get_value_as_int(),
+            "name": name, "path": path, "cpu": self.spin_cpu.get_value_as_int(),
+            "ram": ram, "disk": self.spin_disk.get_value_as_int(),
             "disk_type": "qcow2" if self.radio_qcow2.get_active() else "raw",
-            "firmware": firmware,
-            "display": self.combo_disp.get_active_text(),
-            "iso": self.iso_path if self.iso_path else "",
-            "iso_enabled": True if self.iso_path else False,
+            "firmware": firmware, "display": self.combo_disp.get_active_text(),
+            "iso": self.iso_path or "", "iso_enabled": bool(self.iso_path),
             "3d_acceleration": self.check_3d.get_active(),
             "disk_image": os.path.join(path, name + ".img"),
             "tpm_enabled": self.check_tpm.get_active(),
-            "arch": self.combo_arch.get_active_text()
         }
         if not os.path.exists(config["disk_image"]):
             qemu_img = shutil.which("qemu-img")
             if qemu_img:
                 try:
                     subprocess.run([qemu_img, "create", "-f", config["disk_type"],
-                                   config["disk_image"], f"{config['disk']}G"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                   config["disk_image"], f"{config['disk']}G"], check=True, capture_output=True, text=True)
                     logging.info(f"Created disk image {config['disk_image']}")
                 except subprocess.CalledProcessError as e:
-                    show_detailed_error_dialog(f"Error creating disk: {e}", str(e), self)
-                    logging.error(f"Error creating disk {config['disk_image']}: {e}")
+                    show_detailed_error_dialog(f"Error creating disk: {e.stderr}", str(e), self)
+                    logging.error(f"Error creating disk {config['disk_image']}: {e.stderr}")
                     return None
             else:
                 show_detailed_error_dialog("qemu-img not found.", "Please install QEMU.", self)
@@ -533,11 +552,9 @@ class VMCreateDialog(Gtk.Dialog):
                 return None
         if config["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
             if not copy_uefi_files(config, self):
-                show_detailed_error_dialog("Failed to copy UEFI files. Using BIOS firmware.", "Check OVMF installation.", self)
+                show_detailed_error_dialog("Failed to copy UEFI files. Using BIOS firmware instead.", "Check OVMF installation and permissions.", self)
                 logging.warning("Failed to copy UEFI files, falling back to BIOS")
                 config["firmware"] = "BIOS"
-        elif self.initial_firmware in ["UEFI", "UEFI+Secure Boot"]:
-            delete_ovmf_dir(config)
         config["launch_cmd"] = build_launch_command(config)
         return config
 
@@ -548,6 +565,7 @@ class VMSettingsDialog(Gtk.Dialog):
         self.set_resizable(True)
         self.config = config.copy()
         self.original_name = config["name"]
+        self.original_path = config["path"]
         box = self.get_content_area()
         grid = Gtk.Grid(column_spacing=10, row_spacing=10)
         grid.set_margin_top(10)
@@ -596,12 +614,9 @@ class VMSettingsDialog(Gtk.Dialog):
         fw_box.pack_start(self.radio_bios, False, False, 0)
         fw_box.pack_start(self.radio_uefi, False, False, 0)
         fw_box.pack_start(self.radio_secure, False, False, 0)
-        if self.config.get("firmware", "BIOS") == "UEFI":
-            self.radio_uefi.set_active(True)
-        elif self.config.get("firmware") == "UEFI+Secure Boot":
-            self.radio_secure.set_active(True)
-        else:
-            self.radio_bios.set_active(True)
+        if self.config.get("firmware", "BIOS") == "UEFI": self.radio_uefi.set_active(True)
+        elif self.config.get("firmware") == "UEFI+Secure Boot": self.radio_secure.set_active(True)
+        else: self.radio_bios.set_active(True)
         grid.attach(fw_box, 1, 4, 2, 1)
         grid.attach(Gtk.Label(label="Enable TPM:"), 0, 5, 1, 1)
         self.check_tpm = Gtk.CheckButton()
@@ -610,11 +625,9 @@ class VMSettingsDialog(Gtk.Dialog):
         grid.attach(self.check_tpm, 1, 5, 2, 1)
         grid.attach(Gtk.Label(label="Display:"), 0, 6, 1, 1)
         self.combo_disp = Gtk.ComboBoxText()
-        for opt in ["gtk (default)", "sdl", "spice (virtio)", "virtio", "qemu"]:
-            self.combo_disp.append_text(opt)
-        active_index = 0
-        if self.config.get("display") in ["gtk (default)", "sdl", "spice (virtio)", "virtio", "qemu"]:
-            active_index = ["gtk (default)", "sdl", "spice (virtio)", "virtio", "qemu"].index(self.config.get("display"))
+        disp_opts = ["gtk (default)", "sdl", "spice (virtio)", "virtio", "qemu"]
+        for opt in disp_opts: self.combo_disp.append_text(opt)
+        active_index = disp_opts.index(self.config.get("display", disp_opts[0])) if self.config.get("display") in disp_opts else 0
         self.combo_disp.set_active(active_index)
         self.combo_disp.set_tooltip_text("Select display backend")
         grid.attach(self.combo_disp, 1, 6, 2, 1)
@@ -626,16 +639,6 @@ class VMSettingsDialog(Gtk.Dialog):
         self.check_3d.set_active(self.config.get("3d_acceleration", False))
         self.check_3d.set_tooltip_text("Enable 3D graphics acceleration")
         grid.attach(self.check_3d, 1, 7, 2, 1)
-        grid.attach(Gtk.Label(label="Architecture:"), 0, 8, 1, 1)
-        self.combo_arch = Gtk.ComboBoxText()
-        for arch in ["x86_64", "aarch64", "riscv64"]:
-            self.combo_arch.append_text(arch)
-        active_arch_index = 0
-        if self.config.get("arch") in ["x86_64", "aarch64", "riscv64"]:
-            active_arch_index = ["x86_64", "aarch64", "riscv64"].index(self.config.get("arch"))
-        self.combo_arch.set_active(active_arch_index)
-        self.combo_arch.set_tooltip_text("Select CPU architecture")
-        grid.attach(self.combo_arch, 1, 8, 2, 1)
         box.add(grid)
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Apply", Gtk.ResponseType.OK)
@@ -643,101 +646,86 @@ class VMSettingsDialog(Gtk.Dialog):
         self.on_display_changed(self.combo_disp)
         self.initial_firmware = self.config.get("firmware", "BIOS")
         self.update_iso_entry_sensitivity_settings()
-
     def on_display_changed(self, combo):
-        selected = combo.get_active_text()
-        if selected == "gtk (default)":
+        selected = combo.get_active_text().lower()
+        if "gtk" in selected or "sdl" in selected:
             self.recommend_label.set_text("Recommended for Linux")
             self.check_3d.set_sensitive(True)
-        elif selected == "sdl":
-            self.recommend_label.set_text("Recommended for Linux")
-            self.check_3d.set_sensitive(True)
-        elif selected == "spice (virtio)":
+        elif "spice" in selected:
             self.recommend_label.set_text("Recommended for Windows")
             self.check_3d.set_sensitive(True)
-        elif selected == "virtio":
+        elif "virtio" in selected:
             self.recommend_label.set_text("Optimized for Windows with 3D")
             self.check_3d.set_sensitive(True)
-        elif selected == "qemu":
-            self.recommend_label.set_text("")
+        elif "qemu" in selected:
+            self.recommend_label.set_text("Headless mode")
             self.check_3d.set_sensitive(False)
             self.check_3d.set_active(False)
-
     def on_iso_enabled_toggled_settings(self, check):
         self.update_iso_entry_sensitivity_settings()
-
     def update_iso_entry_sensitivity_settings(self):
         is_enabled = self.check_iso_enable.get_active()
         self.entry_iso.set_sensitive(is_enabled)
         self.btn_iso_browse.set_sensitive(is_enabled)
-
     def on_iso_browse(self, w):
-        d = Gtk.FileChooserDialog(title="Select ISO File", parent=self,
-                                  action=Gtk.FileChooserAction.OPEN)
+        d = Gtk.FileChooserDialog(title="Select ISO File", parent=self, action=Gtk.FileChooserAction.OPEN)
         d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
-        f = Gtk.FileFilter()
-        f.set_name("ISO Files")
-        f.add_pattern("*.iso")
-        d.add_filter(f)
-        if d.run() == Gtk.ResponseType.OK:
-            self.entry_iso.set_text(d.get_filename())
+        f = Gtk.FileFilter(); f.set_name("ISO Files"); f.add_pattern("*.iso"); d.add_filter(f)
+        if d.run() == Gtk.ResponseType.OK: self.entry_iso.set_text(d.get_filename())
         d.destroy()
-
     def get_updated_config(self):
+        new_config = self.config.copy()
         new_name = self.entry_name.get_text()
         if not new_name or re.search(r'[<>:"/\\|?*]', new_name):
             show_detailed_error_dialog("Invalid VM name.", "Name cannot be empty or contain special characters.", self)
-            logging.error(f"Invalid VM name: {new_name}")
             return None
         total_mem = psutil.virtual_memory().total // (1024 * 1024)
         ram = self.spin_ram.get_value_as_int()
-        if ram > total_mem:
-            show_detailed_error_dialog("Invalid RAM.", f"RAM ({ram} MiB) exceeds available memory ({total_mem} MiB).", self)
-            logging.error(f"RAM {ram} MiB exceeds available {total_mem} MiB")
+        if ram >= total_mem:
+            show_detailed_error_dialog("Invalid RAM.", f"RAM ({ram} MiB) is too close to or exceeds host memory ({total_mem} MiB).", self)
             return None
-        firmware = "BIOS"
-        if self.radio_uefi.get_active():
-            firmware = "UEFI"
-        elif self.radio_secure.get_active():
-            firmware = "UEFI+Secure Boot"
+
         if new_name != self.original_name:
-            old_conf_file = os.path.join(self.config["path"], f"{self.original_name}.json")
-            new_conf_file = os.path.join(self.config["path"], f"{new_name}.json")
-            old_disk_image = self.config["disk_image"]
-            new_disk_image = os.path.join(self.config["path"], f"{new_name}.img")
+            old_conf_file = os.path.join(self.original_path, f"{self.original_name}.json")
+            new_conf_file = os.path.join(self.original_path, f"{new_name}.json")
+            old_disk_image = new_config["disk_image"]
+            new_disk_image = os.path.join(self.original_path, f"{new_name}.img")
             try:
-                if os.path.exists(old_conf_file):
-                    os.rename(old_conf_file, new_conf_file)
-                    logging.info(f"Renamed config from {old_conf_file} to {new_conf_file}")
-                if os.path.exists(old_disk_image):
-                    os.rename(old_disk_image, new_disk_image)
-                    logging.info(f"Renamed disk image from {old_disk_image} to {new_disk_image}")
-                self.config["disk_image"] = new_disk_image
+                if os.path.exists(old_conf_file): os.rename(old_conf_file, new_conf_file)
+                if os.path.exists(old_disk_image): os.rename(old_disk_image, new_disk_image)
+                new_config["disk_image"] = new_disk_image
             except OSError as e:
                 show_detailed_error_dialog(f"Error renaming files: {e}", str(e), self)
-                logging.error(f"Error renaming files: {e}")
                 return None
-        self.config["name"] = new_name
-        self.config["iso"] = urllib.parse.unquote(self.entry_iso.get_text()) if self.check_iso_enable.get_active() else ""
-        self.config["iso_enabled"] = self.check_iso_enable.get_active()
-        self.config["cpu"] = self.spin_cpu.get_value_as_int()
-        self.config["ram"] = ram
-        self.config["firmware"] = firmware
-        self.config["display"] = self.combo_disp.get_active_text()
-        self.config["3d_acceleration"] = self.check_3d.get_active()
-        self.config["tpm_enabled"] = self.check_tpm.get_active()
-        self.config["arch"] = self.combo_arch.get_active_text()
-        if self.config["firmware"] != self.initial_firmware:
-            if self.config["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
-                if not copy_uefi_files(self.config, self):
-                    show_detailed_error_dialog("Error copying UEFI files.", "Failed to copy OVMF files.", self)
-                    logging.warning("Failed to copy UEFI files, falling back to BIOS")
-                    self.config["firmware"] = "BIOS"
-                    return None
+
+        new_config["name"] = new_name
+        new_config["iso"] = self.entry_iso.get_text() if self.check_iso_enable.get_active() else ""
+        new_config["iso_enabled"] = self.check_iso_enable.get_active()
+        new_config["cpu"] = self.spin_cpu.get_value_as_int()
+        new_config["ram"] = ram
+        new_firmware = "BIOS"
+        if self.radio_uefi.get_active(): new_firmware = "UEFI"
+        elif self.radio_secure.get_active(): new_firmware = "UEFI+Secure Boot"
+        new_config["firmware"] = new_firmware
+        new_config["display"] = self.combo_disp.get_active_text()
+        new_config["3d_acceleration"] = self.check_3d.get_active()
+        new_config["tpm_enabled"] = self.check_tpm.get_active()
+        if "arch" in new_config:
+            del new_config["arch"]
+
+        if new_config["firmware"] != self.initial_firmware:
+            if new_config["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
+                if not copy_uefi_files(new_config, self):
+                    show_detailed_error_dialog("Error copying UEFI files.", "Reverting firmware change.", self)
+                    new_config["firmware"] = self.initial_firmware
             else:
-                delete_ovmf_dir(self.config)
-        self.config["launch_cmd"] = build_launch_command(self.config)
-        return self.config
+                delete_ovmf_dir(new_config)
+                new_config.pop("ovmf_code", None)
+                new_config.pop("ovmf_code_secure", None)
+                new_config.pop("ovmf_vars_secure", None)
+
+        new_config["launch_cmd"] = build_launch_command(new_config)
+        return new_config
 
 class VMCloneDialog(Gtk.Dialog):
     def __init__(self, parent, vm_config):
@@ -779,7 +767,7 @@ class VMCloneDialog(Gtk.Dialog):
 
 class ManageSnapshotsDialog(Gtk.Dialog):
     def __init__(self, parent, vm):
-        super().__init__(title="Manage Snapshots", transient_for=parent)
+        super().__init__(title=f"Manage Snapshots for {vm['name']}", transient_for=parent)
         self.set_default_size(600, 400)
         self.set_resizable(True)
         self.vm = vm
@@ -787,83 +775,91 @@ class ManageSnapshotsDialog(Gtk.Dialog):
         self.create_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.create_tab.set_border_width(10)
         self.create_entry = Gtk.Entry()
+        self.create_entry.set_placeholder_text("Enter new snapshot name")
         self.create_entry.set_tooltip_text("Enter snapshot name")
         create_btn = Gtk.Button(label="Create Snapshot")
         create_btn.set_tooltip_text("Create a new snapshot")
         create_btn.connect("clicked", self.on_create)
-        self.create_list = Gtk.ListBox()
-        self.create_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.list_current = Gtk.ListBox()
+        self.list_current.set_selection_mode(Gtk.SelectionMode.NONE)
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.add(self.list_current)
         self.create_tab.pack_start(self.create_entry, False, False, 0)
         self.create_tab.pack_start(create_btn, False, False, 0)
-        self.create_tab.pack_start(self.create_list, True, True, 0)
+        self.create_tab.pack_start(Gtk.Label(label="Existing Snapshots:"), False, False, 5)
+        self.create_tab.pack_start(scrolled, True, True, 0)
         self.restore_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.restore_tab.set_border_width(10)
         self.restore_list = Gtk.ListBox()
         self.restore_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self.restore_list.connect("row-activated", self.on_restore)
+        restore_btn = Gtk.Button(label="Restore Selected Snapshot")
+        restore_btn.connect("clicked", self.on_restore_clicked)
         self.restore_tab.pack_start(self.restore_list, True, True, 0)
+        self.restore_tab.pack_end(restore_btn, False, False, 0)
         self.delete_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.delete_tab.set_border_width(10)
         self.delete_list = Gtk.ListBox()
         self.delete_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self.delete_list.connect("row-activated", self.on_delete)
+        delete_btn = Gtk.Button(label="Delete Selected Snapshot")
+        delete_btn.connect("clicked", self.on_delete_clicked)
         self.delete_tab.pack_start(self.delete_list, True, True, 0)
-        self.notebook.append_page(self.create_tab, Gtk.Label(label="Create"))
+        self.delete_tab.pack_end(delete_btn, False, False, 0)
+        self.notebook.append_page(self.create_tab, Gtk.Label(label="Create / View"))
         self.notebook.append_page(self.restore_tab, Gtk.Label(label="Restore"))
         self.notebook.append_page(self.delete_tab, Gtk.Label(label="Delete"))
         self.get_content_area().add(self.notebook)
         self.add_button("Close", Gtk.ResponseType.CLOSE)
         self.notebook.connect("switch-page", self.on_switch)
-        self.refresh_all()
+        self.refresh_all_lists()
         self.show_all()
     def on_switch(self, notebook, page, page_num):
-        self.refresh_all()
-    def refresh_all(self):
-        self.refresh_list(self.create_list)
-        self.refresh_list(self.restore_list)
-        self.refresh_list(self.delete_list)
-    def refresh_list(self, listbox):
-        for child in listbox.get_children():
-            listbox.remove(child)
+        self.refresh_all_lists()
+    def refresh_all_lists(self):
         snaps = list_snapshots(self.vm)
-        for snap in snaps:
-            row = Gtk.ListBoxRow()
-            label = Gtk.Label(label=snap)
-            row.add(label)
-            listbox.add(row)
-            row.show_all()
-        listbox.show_all()
+        for listbox in [self.list_current, self.restore_list, self.delete_list]:
+            for child in listbox.get_children(): listbox.remove(child)
+            for snap in snaps:
+                row = Gtk.ListBoxRow()
+                row.add(Gtk.Label(label=snap, xalign=0.05, margin=5))
+                listbox.add(row)
+            listbox.show_all()
+    def handle_operation(self, operation_func, *args):
+        progress = ProgressDialog(self, "Processing Snapshot...")
+        def task_thread():
+            success, message = operation_func(*args)
+            GLib.idle_add(progress.destroy)
+            if success:
+                GLib.idle_add(show_info_dialog, "Success", message, self)
+                GLib.idle_add(self.refresh_all_lists)
+            else:
+                GLib.idle_add(show_detailed_error_dialog, "Snapshot Operation Failed", message, self)
+        threading.Thread(target=task_thread, daemon=True).start()
+        progress.run()
     def on_create(self, button):
-        snap_name = self.create_entry.get_text()
+        snap_name = self.create_entry.get_text().strip()
         if snap_name:
-            if create_snapshot_cmd(self.vm, snap_name):
-                self.create_entry.set_text("")
-                self.refresh_all()
-            else:
-                show_detailed_error_dialog("Failed to create snapshot.", "Check qemu-img and disk image.", self)
-    def on_restore(self, listbox, row):
-        snap = row.get_child().get_text()
-        if restore_snapshot(self.vm, snap):
-            show_detailed_error_dialog(f"Restored snapshot '{snap}'.", "", self)
-            self.refresh_all()
-        else:
-            show_detailed_error_dialog("Failed to restore snapshot.", "Check qemu-img and disk image.", self)
-    def on_delete(self, listbox, row):
-        snap = row.get_child().get_text()
-        d = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text=f"Delete snapshot '{snap}'?")
-        response = d.run()
-        d.destroy()
-        if response == Gtk.ResponseType.YES:
-            if delete_snapshot(self.vm, snap):
-                self.refresh_all()
-            else:
-                show_detailed_error_dialog("Failed to delete snapshot.", "Check qemu-img and disk image.", self)
+            self.handle_operation(create_snapshot_cmd, self.vm, snap_name)
+            self.create_entry.set_text("")
+    def on_restore_clicked(self, button):
+        row = self.restore_list.get_selected_row()
+        if row:
+            snap = row.get_child().get_text()
+            self.handle_operation(restore_snapshot_cmd, self.vm, snap)
+    def on_delete_clicked(self, button):
+        row = self.delete_list.get_selected_row()
+        if row:
+            snap = row.get_child().get_text()
+            d = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text=f"Delete snapshot '{snap}'?")
+            if d.run() == Gtk.ResponseType.YES:
+                self.handle_operation(delete_snapshot_cmd, self.vm, snap)
+            d.destroy()
 
 class QEMUManagerMain(Gtk.Window):
     def __init__(self):
         super().__init__(title="Nicos Qemu GUI")
         self.set_default_size(1000,700)
         self.set_resizable(True)
+        self.vm_processes = {}
         self.vm_configs = load_all_vm_configs()
         self.build_ui()
         self.apply_css()
@@ -913,39 +909,39 @@ class QEMUManagerMain(Gtk.Window):
     def refresh_vm_list(self):
         for row in self.listbox.get_children():
             self.listbox.remove(row)
+        self.vm_configs.sort(key=lambda x: x.get('name', '').lower())
         for vm in self.vm_configs:
             row = self.create_vm_row(vm)
             self.listbox.add(row)
         self.listbox.show_all()
     def create_vm_row(self, vm):
         row = Gtk.ListBoxRow()
+        event_box = Gtk.EventBox()
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         hbox.get_style_context().add_class("vm-item")
-        label = Gtk.Label(label=vm["name"])
-        label.set_xalign(0.0)
+        label = Gtk.Label(label=vm["name"], xalign=0.0)
         hbox.pack_start(label, True, True, 0)
         play_btn = Gtk.Button()
         play_btn.set_relief(Gtk.ReliefStyle.NONE)
-        play_btn.set_size_request(32,32)
         play_img = Gtk.Image.new_from_icon_name("media-playback-start", Gtk.IconSize.BUTTON)
         play_btn.set_image(play_img)
         play_btn.get_style_context().add_class("round-button")
         play_btn.set_tooltip_text("Start virtual machine")
-        play_btn.connect("clicked", lambda b, vm=vm: self.start_vm(vm))
+        play_btn.connect("clicked", lambda b, v=vm: self.start_vm(v))
         settings_btn = Gtk.Button()
         settings_btn.set_relief(Gtk.ReliefStyle.NONE)
-        settings_btn.set_size_request(32,32)
         set_img = Gtk.Image.new_from_icon_name("preferences-system", Gtk.IconSize.BUTTON)
         settings_btn.set_image(set_img)
         settings_btn.get_style_context().add_class("round-button")
         settings_btn.set_tooltip_text("Edit VM settings")
-        settings_btn.connect("clicked", lambda b, vm=vm: self.edit_vm(vm))
+        settings_btn.connect("clicked", lambda b, v=vm: self.edit_vm(v))
         hbox.pack_end(settings_btn, False, False, 0)
         hbox.pack_end(play_btn, False, False, 0)
-        row.add(hbox)
-        row.connect("button-press-event", self.on_vm_item_event, vm)
+        event_box.add(hbox)
+        event_box.connect("button-press-event", self.on_vm_item_event, vm)
+        row.add(event_box)
         return row
-    def on_vm_item_event(self, w, event, vm):
+    def on_vm_item_event(self, widget, event, vm):
         if event.button == 3:
             menu = self.create_context_menu(vm)
             menu.popup_at_pointer(event)
@@ -953,43 +949,34 @@ class QEMUManagerMain(Gtk.Window):
         return False
     def create_context_menu(self, vm):
         menu = Gtk.Menu()
-        item_start = Gtk.MenuItem(label="Start")
-        item_start.set_tooltip_text("Start the virtual machine")
-        item_settings = Gtk.MenuItem(label="Edit")
-        item_settings.set_tooltip_text("Edit VM configuration")
-        item_manage_snap = Gtk.MenuItem(label="Manage Snapshots")
-        item_manage_snap.set_tooltip_text("Manage VM snapshots")
-        item_delete = Gtk.MenuItem(label="Delete")
-        item_delete.set_tooltip_text("Delete the virtual machine")
-        item_clone = Gtk.MenuItem(label="Clone")
-        item_clone.set_tooltip_text("Clone the virtual machine")
-        item_start.connect("activate", lambda b, vm=vm: self.start_vm(vm))
-        item_settings.connect("activate", lambda b, vm=vm: self.edit_vm(vm))
-        item_manage_snap.connect("activate", lambda b, vm=vm: self.open_manage_snapshots(vm))
-        item_delete.connect("activate", lambda b, vm=vm: self.delete_vm(vm))
-        item_clone.connect("activate", lambda b, vm=vm: self.clone_vm(vm))
-        menu.append(item_start)
-        menu.append(item_settings)
-        menu.append(item_manage_snap)
-        menu.append(item_clone)
-        menu.append(item_delete)
+        items = {"Start": self.start_vm, "Edit": self.edit_vm,
+                 "Manage Snapshots": self.open_manage_snapshots, "Clone": self.clone_vm,
+                 "Delete": self.delete_vm}
+        for label, func in items.items():
+            item = Gtk.MenuItem(label=label)
+            item.connect("activate", lambda w, v=vm, f=func: f(v))
+            menu.append(item)
         menu.show_all()
         return menu
     def open_manage_snapshots(self, vm):
+        if vm.get("disk_type") != "qcow2":
+            show_detailed_error_dialog("Snapshots not supported", "Snapshots are only available for 'qcow2' disk images.", self)
+            return
         dlg = ManageSnapshotsDialog(self, vm)
         dlg.run()
         dlg.destroy()
     def start_vm(self, vm):
-        if not vm["launch_cmd"]:
-            show_detailed_error_dialog("No start command!", "Launch command is missing.", self)
+        if not vm.get("launch_cmd"):
+            show_detailed_error_dialog("No start command!", "Launch command is missing or invalid. Please check VM settings.", self)
             logging.error(f"No launch command for VM {vm['name']}")
             return
         if not validate_vm_config(vm):
             return
         try:
-            subprocess.Popen(vm["launch_cmd"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            logging.info(f"Started VM {vm['name']}")
-        except (subprocess.CalledProcessError, OSError) as e:
+            proc = subprocess.Popen(vm["launch_cmd"])
+            self.vm_processes[vm['name']] = proc
+            logging.info(f"Started VM {vm['name']} with PID {proc.pid}")
+        except (OSError, FileNotFoundError) as e:
             show_detailed_error_dialog(f"Error starting Virtual Machine: {e}", str(e), self)
             logging.error(f"Error starting VM {vm['name']}: {e}")
     def edit_vm(self, vm):
@@ -1002,78 +989,86 @@ class QEMUManagerMain(Gtk.Window):
                 self.refresh_vm_list()
         dialog.destroy()
     def delete_vm(self, vm):
-        dialog = Gtk.Dialog(title="Delete Virtual Machine?", transient_for=self, flags=0)
-        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL, "Delete", Gtk.ResponseType.OK)
-        box = dialog.get_content_area()
-        box.add(Gtk.Label(label=f"Delete Virtual Machine '{vm['name']}' with all its files?"))
-        dialog.show_all()
+        dialog = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION,
+                                   buttons=Gtk.ButtonsType.YES_NO, text=f"Delete '{vm['name']}'?")
+        dialog.set_secondary_text("This will permanently delete the VM's configuration and disk image. This action cannot be undone.")
         resp = dialog.run()
-        if resp == Gtk.ResponseType.OK:
+        dialog.destroy()
+        if resp == Gtk.ResponseType.YES:
             try:
                 vm_path = vm["path"]
                 conf_file = os.path.join(vm_path, f"{vm['name']}.json")
-                if os.path.exists(conf_file):
-                    os.remove(conf_file)
-                    logging.info(f"Deleted config file {conf_file}")
-                if os.path.exists(vm["disk_image"]):
-                    os.remove(vm["disk_image"])
-                    logging.info(f"Deleted disk image {vm['disk_image']}")
+                if os.path.exists(conf_file): os.remove(conf_file)
+                if os.path.exists(vm["disk_image"]): os.remove(vm["disk_image"])
                 delete_ovmf_dir(vm)
                 tpm_dir = os.path.join(vm_path, "tpm")
-                if os.path.exists(tpm_dir):
-                    shutil.rmtree(tpm_dir)
-                    logging.info(f"Deleted TPM directory {tpm_dir}")
+                if os.path.exists(tpm_dir): shutil.rmtree(tpm_dir)
                 index = load_vm_index()
-                if vm_path in index:
+                if vm_path in index and not any(f.endswith(".json") for f in os.listdir(vm_path)):
                     index.remove(vm_path)
                     save_vm_index(index)
                 self.vm_configs = load_all_vm_configs()
                 self.refresh_vm_list()
             except OSError as e:
-                show_detailed_error_dialog(f"Error deleting Virtual Machine: {e}", str(e), self)
-                logging.error(f"Error deleting VM {vm['name']}: {e}")
-        dialog.destroy()
+                show_detailed_error_dialog(f"Error deleting VM: {e}", str(e), self)
     def clone_vm(self, vm):
         clone_dialog = VMCloneDialog(self, vm)
         if clone_dialog.run() == Gtk.ResponseType.OK:
             clone_info = clone_dialog.get_clone_info()
-            if clone_info:
-                progress = ProgressDialog(self, "Cloning VM...")
-                def clone_thread():
-                    new_vm_name = clone_info["new_name"]
-                    new_vm_path = clone_info["new_path"]
-                    if not new_vm_path:
-                        new_vm_path = os.path.join(os.path.dirname(vm["path"]), new_vm_name)
-                    if not new_vm_name or re.search(r'[<>:"/\\|?*]', new_vm_name):
-                        GLib.idle_add(show_detailed_error_dialog, "Invalid clone name.", "Name cannot be empty or contain special characters.", self)
-                        GLib.idle_add(progress.destroy)
-                        return
-                    if not os.path.isdir(new_vm_path) or not os.access(new_vm_path, os.W_OK):
-                        GLib.idle_add(show_detailed_error_dialog, "Invalid clone directory.", "Directory does not exist or is not writable.", self)
-                        GLib.idle_add(progress.destroy)
-                        return
-                    new_vm_config = vm.copy()
-                    new_vm_config["name"] = new_vm_name
-                    new_vm_config["path"] = new_vm_path
-                    new_vm_config["disk_image"] = os.path.join(new_vm_path, f"{new_vm_name}.img")
-                    os.makedirs(new_vm_path, exist_ok=True)
-                    try:
-                        shutil.copy(vm["disk_image"], new_vm_config["disk_image"])
-                        logging.info(f"Copied disk image from {vm['disk_image']} to {new_vm_config['disk_image']}")
-                        if vm["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
-                            copy_uefi_files(new_vm_config, self)
-                        save_vm_config(new_vm_config)
-                        index = load_vm_index()
-                        if new_vm_path not in index:
-                            index.append(new_vm_path)
-                            save_vm_index(index)
-                        GLib.idle_add(self.add_vm, new_vm_config)
-                    except (OSError, subprocess.CalledProcessError) as e:
-                        GLib.idle_add(show_detailed_error_dialog, f"Error cloning VM: {e}", str(e), self)
-                        logging.error(f"Error cloning VM {vm['name']} to {new_vm_name}: {e}")
+            if not clone_info or not clone_info["new_name"] or not clone_info["new_path"]:
+                show_detailed_error_dialog("Invalid Clone Info", "New name and path cannot be empty.", self)
+                clone_dialog.destroy()
+                return
+
+            progress = ProgressDialog(self, f"Cloning {vm['name']}...")
+            def clone_thread():
+                new_vm_name = clone_info["new_name"]
+                new_vm_path = clone_info["new_path"]
+                if re.search(r'[<>:"/\\|?*]', new_vm_name):
+                    GLib.idle_add(show_detailed_error_dialog, "Invalid clone name.", "Name cannot contain special characters.", self)
                     GLib.idle_add(progress.destroy)
-                threading.Thread(target=clone_thread, daemon=True).start()
-                progress.run()
+                    return
+                os.makedirs(new_vm_path, exist_ok=True)
+                if not os.access(new_vm_path, os.W_OK):
+                    GLib.idle_add(show_detailed_error_dialog, "Invalid clone directory.", "Directory is not writable.", self)
+                    GLib.idle_add(progress.destroy)
+                    return
+
+                new_vm_config = vm.copy()
+                new_vm_config["name"] = new_vm_name
+                new_vm_config["path"] = new_vm_path
+                new_vm_config["disk_image"] = os.path.join(new_vm_path, f"{new_vm_name}.img")
+                try:
+                    source_size = os.path.getsize(vm["disk_image"])
+                    copied = 0
+                    with open(vm["disk_image"], 'rb') as fsrc, open(new_vm_config["disk_image"], 'wb') as fdst:
+                        while True:
+                            buf = fsrc.read(4 * 1024 * 1024)
+                            if not buf: break
+                            fdst.write(buf)
+                            copied += len(buf)
+                            fraction = copied / source_size
+                            GLib.idle_add(progress.update, fraction, f"{int(fraction*100)}%")
+
+                    if vm["firmware"] in ["UEFI", "UEFI+Secure Boot"]:
+                        copy_uefi_files(new_vm_config, self)
+
+                    new_vm_config["launch_cmd"] = build_launch_command(new_vm_config)
+                    save_vm_config(new_vm_config)
+
+                    index = load_vm_index()
+                    if new_vm_path not in index:
+                        index.append(new_vm_path)
+                        save_vm_index(index)
+
+                    GLib.idle_add(self.add_vm, new_vm_config)
+                except (OSError, subprocess.CalledProcessError) as e:
+                    GLib.idle_add(show_detailed_error_dialog, f"Error cloning VM: {e}", str(e), self)
+                finally:
+                    GLib.idle_add(progress.destroy)
+
+            threading.Thread(target=clone_thread, daemon=True).start()
+            progress.run()
         clone_dialog.destroy()
 
 if __name__ == "__main__":
