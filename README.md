@@ -108,10 +108,10 @@ python nqg.py
 |----------------------------------------------------------------------|--------|
 | Support Secure Boot & UEFI properly with correct OVMF file detection | ❌     |
 | Add TPM support                                                      | ❌     |
-| Add snapshot support                                                 | ❌     |
-| Add support for Debian                                               | ❌     |
-| Add support for Fedora                                               | ❌     |
-| Change the main window to use full space without borders             | ❌     |
+| Add snapshot support                                                 | ✔️     |
+| Add support for Debian                                               | ✔️     |
+| Add support for Fedora                                               | ✔️     |
+| Change the main window to use full space without borders             | ✔️     |
 | Change the theme to a modern material system-like theme              | ❌     |
 
 
