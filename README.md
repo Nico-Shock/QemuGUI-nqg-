@@ -112,7 +112,7 @@ python nqg.py
 | Add support for Debian                                               | ✔️     |
 | Add support for Fedora                                               | ✔️     |
 | Change the main window to use full space without borders             | ✔️     |
-| Change the theme to a modern material system-like theme              | ❌     |
+| Change the theme to a modern material system-like theme              | ✔️     |
 
 
 Smaller features that are not implemented yet:
