@@ -61,17 +61,10 @@ def copy_uefi_files(config, parent_window=None):
         return False
 
     firmware = config.get("firmware", "")
-    files_to_copy = {}
-
-    if host_os == "arch":
-        files_to_copy["UEFI"] = {"OVMF_CODE_4M.fd": "OVMF_CODE.fd"}
-        files_to_copy["UEFI+Secure Boot"] = {"OVMF_CODE_4M.fd": "OVMF_CODE.fd", "OVMF_VARS_4M.fd": "OVMF_VARS.fd"}
-    elif host_os == "fedora":
-        files_to_copy["UEFI"] = {"OVMF_CODE.fd": "OVMF_CODE.fd"}
-        files_to_copy["UEFI+Secure Boot"] = {"OVMF_CODE.secboot.fd": "OVMF_CODE.fd", "OVMF_VARS.fd": "OVMF_VARS.fd"}
-    else:
-        files_to_copy["UEFI"] = {"OVMF_CODE.fd": "OVMF_CODE.fd"}
-        files_to_copy["UEFI+Secure Boot"] = {"OVMF_CODE.fd": "OVMF_CODE.fd", "OVMF_VARS.fd": "OVMF_VARS.fd"}
+    files_to_copy = {
+        "UEFI": {"OVMF_CODE.fd": "OVMF_CODE.fd"},
+        "UEFI+Secure Boot": {"OVMF_CODE.secboot.fd": "OVMF_CODE.fd", "OVMF_VARS.fd": "OVMF_VARS.fd"}
+    }
 
     selected_files = files_to_copy.get(firmware, {})
 
@@ -576,33 +569,33 @@ class VMSettingsDialog(Gtk.Dialog):
         self.entry_name = Gtk.Entry()
         self.entry_name.set_text(self.config.get("name", ""))
         self.entry_name.set_tooltip_text("Edit the VM name")
-        grid.attach(self.entry_name, 1, 0, 2, 1)
+        grid.attach(self.entry_name, 1, 0, 3, 1)
         grid.attach(Gtk.Label(label="ISO Path:"), 0, 1, 1, 1)
-        self.check_iso_enable = Gtk.CheckButton(label="Enable ISO")
-        self.check_iso_enable.set_active(self.config.get("iso_enabled", False))
-        self.check_iso_enable.set_tooltip_text("Enable or disable ISO usage")
-        self.check_iso_enable.connect("toggled", self.on_iso_enabled_toggled_settings)
-        grid.attach(self.check_iso_enable, 1, 1, 1, 1)
         self.entry_iso = Gtk.Entry()
         self.entry_iso.set_text(self.config.get("iso", ""))
         self.entry_iso.set_tooltip_text("Path to the ISO file")
-        grid.attach(self.entry_iso, 2, 1, 1, 1)
+        grid.attach(self.entry_iso, 1, 1, 2, 1)
         self.btn_iso_browse = Gtk.Button(label="Browse")
         self.btn_iso_browse.set_tooltip_text("Select a new ISO file")
         self.btn_iso_browse.connect("clicked", self.on_iso_browse)
         grid.attach(self.btn_iso_browse, 3, 1, 1, 1)
+        self.check_iso_enable = Gtk.CheckButton()
+        self.check_iso_enable.set_active(self.config.get("iso_enabled", False))
+        self.check_iso_enable.set_tooltip_text("Enable or disable ISO usage")
+        self.check_iso_enable.connect("toggled", self.on_iso_enabled_toggled_settings)
+        grid.attach(self.check_iso_enable, 4, 1, 1, 1)
         grid.attach(Gtk.Label(label="CPU Cores:"), 0, 2, 1, 1)
         self.spin_cpu = Gtk.SpinButton.new_with_range(1, os.cpu_count(), 1)
         self.spin_cpu.set_value(self.config.get("cpu", 2))
         self.spin_cpu.set_tooltip_text("Number of CPU cores for the VM")
-        grid.attach(self.spin_cpu, 1, 2, 2, 1)
-        grid.attach(Gtk.Label(label=f"Max: {os.cpu_count()}"), 3, 2, 1, 1)
+        grid.attach(self.spin_cpu, 1, 2, 3, 1)
+        grid.attach(Gtk.Label(label=f"Max: {os.cpu_count()}"), 4, 2, 1, 1)
         grid.attach(Gtk.Label(label="RAM (MiB):"), 0, 3, 1, 1)
         self.spin_ram = Gtk.SpinButton.new_with_range(256, 131072, 256)
         self.spin_ram.set_value(self.config.get("ram", 4096))
         self.spin_ram.set_tooltip_text("Memory allocation in MiB")
-        grid.attach(self.spin_ram, 1, 3, 2, 1)
-        grid.attach(Gtk.Label(label="Max: 131072 MiB"), 3, 3, 1, 1)
+        grid.attach(self.spin_ram, 1, 3, 3, 1)
+        grid.attach(Gtk.Label(label="Max: 131072 MiB"), 4, 3, 1, 1)
         grid.attach(Gtk.Label(label="Firmware:"), 0, 4, 1, 1)
         fw_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.radio_bios = Gtk.RadioButton.new_with_label_from_widget(None, "BIOS")
@@ -617,12 +610,12 @@ class VMSettingsDialog(Gtk.Dialog):
         if self.config.get("firmware", "BIOS") == "UEFI": self.radio_uefi.set_active(True)
         elif self.config.get("firmware") == "UEFI+Secure Boot": self.radio_secure.set_active(True)
         else: self.radio_bios.set_active(True)
-        grid.attach(fw_box, 1, 4, 2, 1)
+        grid.attach(fw_box, 1, 4, 3, 1)
         grid.attach(Gtk.Label(label="Enable TPM:"), 0, 5, 1, 1)
         self.check_tpm = Gtk.CheckButton()
         self.check_tpm.set_active(self.config.get("tpm_enabled", False))
         self.check_tpm.set_tooltip_text("Enable Trusted Platform Module")
-        grid.attach(self.check_tpm, 1, 5, 2, 1)
+        grid.attach(self.check_tpm, 1, 5, 3, 1)
         grid.attach(Gtk.Label(label="Display:"), 0, 6, 1, 1)
         self.combo_disp = Gtk.ComboBoxText()
         disp_opts = ["gtk (default)", "sdl", "spice (virtio)", "virtio", "qemu"]
@@ -630,15 +623,15 @@ class VMSettingsDialog(Gtk.Dialog):
         active_index = disp_opts.index(self.config.get("display", disp_opts[0])) if self.config.get("display") in disp_opts else 0
         self.combo_disp.set_active(active_index)
         self.combo_disp.set_tooltip_text("Select display backend")
-        grid.attach(self.combo_disp, 1, 6, 2, 1)
+        grid.attach(self.combo_disp, 1, 6, 3, 1)
         self.recommend_label = Gtk.Label()
-        grid.attach(self.recommend_label, 3, 6, 1, 1)
+        grid.attach(self.recommend_label, 4, 6, 1, 1)
         self.combo_disp.connect("changed", self.on_display_changed)
         grid.attach(Gtk.Label(label="3D Acceleration:"), 0, 7, 1, 1)
         self.check_3d = Gtk.CheckButton()
         self.check_3d.set_active(self.config.get("3d_acceleration", False))
         self.check_3d.set_tooltip_text("Enable 3D graphics acceleration")
-        grid.attach(self.check_3d, 1, 7, 2, 1)
+        grid.attach(self.check_3d, 1, 7, 3, 1)
         box.add(grid)
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Apply", Gtk.ResponseType.OK)
@@ -826,7 +819,16 @@ class ManageSnapshotsDialog(Gtk.Dialog):
     def handle_operation(self, operation_func, *args):
         progress = ProgressDialog(self, "Processing Snapshot...")
         def task_thread():
+            def pulse_loop():
+                while not stop_pulse:
+                    GLib.idle_add(progress.pulse, "Processing...")
+                    time.sleep(0.2)
+            import time
+            stop_pulse = False
+            pulse_thread = threading.Thread(target=pulse_loop, daemon=True)
+            pulse_thread.start()
             success, message = operation_func(*args)
+            stop_pulse = True
             GLib.idle_add(progress.destroy)
             if success:
                 GLib.idle_add(show_info_dialog, "Success", message, self)
@@ -865,10 +867,10 @@ class QEMUManagerMain(Gtk.Window):
         self.apply_css()
     def build_ui(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        vbox.set_margin_top(10)
-        vbox.set_margin_bottom(10)
-        vbox.set_margin_start(10)
-        vbox.set_margin_end(10)
+        vbox.set_margin_top(0)
+        vbox.set_margin_bottom(0)
+        vbox.set_margin_start(0)
+        vbox.set_margin_end(0)
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
         self.set_titlebar(header)
@@ -886,7 +888,7 @@ class QEMUManagerMain(Gtk.Window):
     def apply_css(self):
         css = b"""
         window { background-color: #1e1e2e; }
-        .vm-item { background-color: #2c2c3c; border-radius: 8px; padding: 12px; margin: 4px; color: #ffffff; }
+        .vm-item { background-color: #2c2c3c; border-radius: 8px; padding: 12px; margin: 4px; color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
         .round-button { border-radius: 50%; padding: 4px; background-color: transparent; }
         .iso-drop-area { background-color: #3b3b4b; border: 2px dashed #ffffff; }
         """
@@ -942,6 +944,9 @@ class QEMUManagerMain(Gtk.Window):
         row.add(event_box)
         return row
     def on_vm_item_event(self, widget, event, vm):
+        if event.type == Gdk.EventType._2BUTTON_PRESS and event.button == 1:
+            self.start_vm(vm)
+            return True
         if event.button == 3:
             menu = self.create_context_menu(vm)
             menu.popup_at_pointer(event)
