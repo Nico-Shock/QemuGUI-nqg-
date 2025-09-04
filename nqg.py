@@ -12,6 +12,7 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
 import webbrowser
 import psutil
+import time
 
 def find_ovmf_source_dir():
     candidates = [
@@ -62,12 +63,11 @@ def copy_uefi_files(config, parent_window=None):
 
     firmware = config.get("firmware", "")
     files_to_copy = {
-        "UEFI": {"OVMF_CODE.fd": "OVMF_CODE.fd"},
+        "UEFI": {"OVMF_CODE.fd": "OVMF_CODE.fd", "OVMF_VARS.fd": "OVMF_VARS.fd"},
         "UEFI+Secure Boot": {"OVMF_CODE.secboot.fd": "OVMF_CODE.fd", "OVMF_VARS.fd": "OVMF_VARS.fd"}
     }
 
     selected_files = files_to_copy.get(firmware, {})
-
     for src_name, dst_name in selected_files.items():
         src = os.path.join(src_dir, src_name)
         dst = os.path.join(ovmf_dir, dst_name)
@@ -86,12 +86,14 @@ def copy_uefi_files(config, parent_window=None):
 
     if firmware == "UEFI":
         config["ovmf_code"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
+        config["ovmf_vars"] = os.path.join(ovmf_dir, "OVMF_VARS.fd")
         config.pop("ovmf_code_secure", None)
         config.pop("ovmf_vars_secure", None)
     elif firmware == "UEFI+Secure Boot":
         config["ovmf_code_secure"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
         config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS.fd")
         config.pop("ovmf_code", None)
+        config.pop("ovmf_vars", None)
 
     return True
 
@@ -103,7 +105,8 @@ def delete_ovmf_dir(config):
             logging.info(f"Deleted {d}")
             return True
         except OSError as e:
-            show_detailed_error_dialog("Error deleting OVMF folder.", str(e), None)
+            logging.error(f"Error deleting OVMF folder: {e}")
+            GLib.idle_add(show_detailed_error_dialog, "Error deleting OVMF folder.", str(e), None)
             return False
     return True
 
@@ -111,9 +114,10 @@ def validate_vm_config(vm):
     if not os.path.exists(vm["disk_image"]):
         show_detailed_error_dialog("Disk image missing.", vm["disk_image"], None)
         return False
-    if vm["firmware"] == "UEFI" and not os.path.exists(vm.get("ovmf_code", "")):
-        show_detailed_error_dialog("UEFI file missing.", vm.get("ovmf_code", ""), None)
-        return False
+    if vm["firmware"] == "UEFI":
+        if not os.path.exists(vm.get("ovmf_code", "")) or not os.path.exists(vm.get("ovmf_vars", "")):
+            show_detailed_error_dialog("UEFI files missing.", f"Code: {vm.get('ovmf_code', '')}\nVars: {vm.get('ovmf_vars', '')}", None)
+            return False
     if vm["firmware"] == "UEFI+Secure Boot":
         if not os.path.exists(vm.get("ovmf_code_secure", "")) or not os.path.exists(vm.get("ovmf_vars_secure", "")):
             show_detailed_error_dialog("Secure Boot files missing.", f"Code: {vm.get('ovmf_code_secure', '')}\nVars: {vm.get('ovmf_vars_secure', '')}", None)
@@ -152,10 +156,10 @@ def build_launch_command(config):
         cmd += ["-display", "none"]
     if config.get("iso_enabled") and config.get("iso"):
         cmd += ["-cdrom", config["iso"]]
-    if config["firmware"] == "UEFI" and config.get("ovmf_code"):
-        cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={config['ovmf_code']}"]
+    if config["firmware"] == "UEFI" and config.get("ovmf_code") and config.get("ovmf_vars"):
+        cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={config['ovmf_code']}", "-drive", f"if=pflash,format=raw,file={config['ovmf_vars']}"]
     if config["firmware"] == "UEFI+Secure Boot" and config.get("ovmf_code_secure") and config.get("ovmf_vars_secure"):
-        cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={config.get('ovmf_code_secure','')}", "-drive", f"if=pflash,format=raw,file={config.get('ovmf_vars_secure','')}"]
+        cmd += ["-drive", f"if=pflash,format=raw,readonly=on,file={config['ovmf_code_secure']}", "-drive", f"if=pflash,format=raw,file={config['ovmf_vars_secure']}"]
     if config.get("tpm_enabled"):
         tpm_dir = os.path.join(config["path"], "tpm")
         os.makedirs(tpm_dir, exist_ok=True)
@@ -164,8 +168,8 @@ def build_launch_command(config):
             subprocess.Popen(["swtpm", "socket", "--tpm2", "--tpmstate", f"dir={tpm_dir}", "--ctrl", f"type=unixio,path={sock}", "--log", "level=0"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             cmd += ["-chardev", f"socket,id=chrtpm,path={sock}", "-tpmdev", "emulator,id=tpm0,chardev=chrtpm", "-device", "tpm-tis,tpmdev=tpm0"]
         except FileNotFoundError:
-             show_detailed_error_dialog("swtpm not found.", "TPM cannot be enabled.", None)
-             config["tpm_enabled"] = False
+            show_detailed_error_dialog("swtpm not found.", "TPM cannot be enabled.", None)
+            config["tpm_enabled"] = False
     logging.info("Built launch command: " + " ".join(cmd))
     return cmd
 
@@ -193,28 +197,6 @@ def create_snapshot_cmd(vm, snap_name):
         return True, "Snapshot created successfully."
     except subprocess.CalledProcessError as e:
         logging.error(f"Failed to create snapshot '{snap_name}': {e.stderr}")
-        return False, e.stderr
-
-def restore_snapshot_cmd(vm, snap_name):
-    qi = shutil.which("qemu-img")
-    if not qi:
-        return False, "qemu-img not found."
-    try:
-        subprocess.run([qi, "snapshot", "-a", snap_name, vm["disk_image"]], check=True, capture_output=True, text=True)
-        return True, f"Snapshot '{snap_name}' restored."
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Failed to restore snapshot '{snap_name}': {e.stderr}")
-        return False, e.stderr
-
-def delete_snapshot_cmd(vm, snap_name):
-    qi = shutil.which("qemu-img")
-    if not qi:
-        return False, "qemu-img not found."
-    try:
-        subprocess.run([qi, "snapshot", "-d", snap_name, vm["disk_image"]], check=True, capture_output=True, text=True)
-        return True, f"Snapshot '{snap_name}' deleted."
-    except subprocess.CalledProcessError as e:
-        logging.error(f"Failed to delete snapshot '{snap_name}': {e.stderr}")
         return False, e.stderr
 
 def load_vm_index():
@@ -260,7 +242,7 @@ def save_vm_config(config):
 
 def show_info_dialog(message, details, parent):
     dlg = Gtk.MessageDialog(transient_for=parent, flags=0, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text=message)
-    dlg.set_secondary_text(details)
+    dlg.format_secondary_text(details)
     dlg.run()
     dlg.destroy()
 
@@ -319,7 +301,7 @@ class ProgressDialog(Gtk.Dialog):
     def pulse(self, text):
         self.progress.pulse()
         if text:
-             self.progress.set_text(text)
+            self.progress.set_text(text)
         return True
 
     def set_text(self, text):
@@ -715,6 +697,7 @@ class VMSettingsDialog(Gtk.Dialog):
                 delete_ovmf_dir(new_config)
                 new_config.pop("ovmf_code", None)
                 new_config.pop("ovmf_code_secure", None)
+                new_config.pop("ovmf_vars", None)
                 new_config.pop("ovmf_vars_secure", None)
 
         new_config["launch_cmd"] = build_launch_command(new_config)
@@ -764,9 +747,11 @@ class ManageSnapshotsDialog(Gtk.Dialog):
         self.set_default_size(600, 400)
         self.set_resizable(True)
         self.vm = vm
-        self.notebook = Gtk.Notebook()
-        self.create_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.create_tab.set_border_width(10)
+        box = self.get_content_area()
+        box.set_margin_top(10)
+        box.set_margin_bottom(10)
+        box.set_margin_start(10)
+        box.set_margin_end(10)
         self.create_entry = Gtk.Entry()
         self.create_entry.set_placeholder_text("Enter new snapshot name")
         self.create_entry.set_tooltip_text("Enter snapshot name")
@@ -776,46 +761,42 @@ class ManageSnapshotsDialog(Gtk.Dialog):
         self.list_current = Gtk.ListBox()
         self.list_current.set_selection_mode(Gtk.SelectionMode.NONE)
         scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scrolled.add(self.list_current)
-        self.create_tab.pack_start(self.create_entry, False, False, 0)
-        self.create_tab.pack_start(create_btn, False, False, 0)
-        self.create_tab.pack_start(Gtk.Label(label="Existing Snapshots:"), False, False, 5)
-        self.create_tab.pack_start(scrolled, True, True, 0)
-        self.restore_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.restore_tab.set_border_width(10)
-        self.restore_list = Gtk.ListBox()
-        self.restore_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        restore_btn = Gtk.Button(label="Restore Selected Snapshot")
-        restore_btn.connect("clicked", self.on_restore_clicked)
-        self.restore_tab.pack_start(self.restore_list, True, True, 0)
-        self.restore_tab.pack_end(restore_btn, False, False, 0)
-        self.delete_tab = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.delete_tab.set_border_width(10)
-        self.delete_list = Gtk.ListBox()
-        self.delete_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        delete_btn = Gtk.Button(label="Delete Selected Snapshot")
-        delete_btn.connect("clicked", self.on_delete_clicked)
-        self.delete_tab.pack_start(self.delete_list, True, True, 0)
-        self.delete_tab.pack_end(delete_btn, False, False, 0)
-        self.notebook.append_page(self.create_tab, Gtk.Label(label="Create / View"))
-        self.notebook.append_page(self.restore_tab, Gtk.Label(label="Restore"))
-        self.notebook.append_page(self.delete_tab, Gtk.Label(label="Delete"))
-        self.get_content_area().add(self.notebook)
+        box.pack_start(self.create_entry, False, False, 0)
+        box.pack_start(create_btn, False, False, 5)
+        box.pack_start(Gtk.Label(label="Existing Snapshots:"), False, False, 5)
+        box.pack_start(scrolled, True, True, 0)
         self.add_button("Close", Gtk.ResponseType.CLOSE)
-        self.notebook.connect("switch-page", self.on_switch)
-        self.refresh_all_lists()
+        self.refresh_list()
         self.show_all()
-    def on_switch(self, notebook, page, page_num):
-        self.refresh_all_lists()
-    def refresh_all_lists(self):
+    def refresh_list(self):
+        for child in self.list_current.get_children():
+            self.list_current.remove(child)
         snaps = list_snapshots(self.vm)
-        for listbox in [self.list_current, self.restore_list, self.delete_list]:
-            for child in listbox.get_children(): listbox.remove(child)
-            for snap in snaps:
-                row = Gtk.ListBoxRow()
-                row.add(Gtk.Label(label=snap, xalign=0.05, margin=5))
-                listbox.add(row)
-            listbox.show_all()
+        for snap in snaps:
+            row = Gtk.ListBoxRow()
+            row.set_selectable(False)
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            hbox.set_margin_start(10)
+            hbox.set_margin_end(10)
+            hbox.set_margin_top(5)
+            hbox.set_margin_bottom(5)
+            label = Gtk.Label(label=snap, xalign=0)
+            hbox.pack_start(label, True, True, 0)
+            restore_btn = Gtk.Button(label="Restore")
+            restore_btn.get_style_context().add_class("snapshot-button")
+            restore_btn.set_tooltip_text(f"Restore snapshot {snap}")
+            restore_btn.connect("clicked", self.on_restore_clicked, snap)
+            delete_btn = Gtk.Button(label="Delete")
+            delete_btn.get_style_context().add_class("snapshot-button")
+            delete_btn.set_tooltip_text(f"Delete snapshot {snap}")
+            delete_btn.connect("clicked", self.on_delete_clicked, snap)
+            hbox.pack_end(delete_btn, False, False, 0)
+            hbox.pack_end(restore_btn, False, False, 0)
+            row.add(hbox)
+            self.list_current.add(row)
+        self.list_current.show_all()
     def handle_operation(self, operation_func, *args):
         progress = ProgressDialog(self, "Processing Snapshot...")
         def task_thread():
@@ -823,7 +804,6 @@ class ManageSnapshotsDialog(Gtk.Dialog):
                 while not stop_pulse:
                     GLib.idle_add(progress.pulse, "Processing...")
                     time.sleep(0.2)
-            import time
             stop_pulse = False
             pulse_thread = threading.Thread(target=pulse_loop, daemon=True)
             pulse_thread.start()
@@ -832,7 +812,7 @@ class ManageSnapshotsDialog(Gtk.Dialog):
             GLib.idle_add(progress.destroy)
             if success:
                 GLib.idle_add(show_info_dialog, "Success", message, self)
-                GLib.idle_add(self.refresh_all_lists)
+                GLib.idle_add(self.refresh_list)
             else:
                 GLib.idle_add(show_detailed_error_dialog, "Snapshot Operation Failed", message, self)
         threading.Thread(target=task_thread, daemon=True).start()
@@ -842,19 +822,13 @@ class ManageSnapshotsDialog(Gtk.Dialog):
         if snap_name:
             self.handle_operation(create_snapshot_cmd, self.vm, snap_name)
             self.create_entry.set_text("")
-    def on_restore_clicked(self, button):
-        row = self.restore_list.get_selected_row()
-        if row:
-            snap = row.get_child().get_text()
-            self.handle_operation(restore_snapshot_cmd, self.vm, snap)
-    def on_delete_clicked(self, button):
-        row = self.delete_list.get_selected_row()
-        if row:
-            snap = row.get_child().get_text()
-            d = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text=f"Delete snapshot '{snap}'?")
-            if d.run() == Gtk.ResponseType.YES:
-                self.handle_operation(delete_snapshot_cmd, self.vm, snap)
-            d.destroy()
+    def on_restore_clicked(self, button, snap):
+        self.handle_operation(lambda vm, s: restore_snapshot_cmd(vm, s), self.vm, snap)
+    def on_delete_clicked(self, button, snap):
+        d = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text=f"Delete snapshot '{snap}'?")
+        if d.run() == Gtk.ResponseType.YES:
+            self.handle_operation(lambda vm, s: delete_snapshot_cmd(vm, s), self.vm, snap)
+        d.destroy()
 
 class QEMUManagerMain(Gtk.Window):
     def __init__(self):
@@ -891,6 +865,8 @@ class QEMUManagerMain(Gtk.Window):
         .vm-item { background-color: #2c2c3c; border-radius: 8px; padding: 12px; margin: 4px; color: #ffffff; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
         .round-button { border-radius: 50%; padding: 4px; background-color: transparent; }
         .iso-drop-area { background-color: #3b3b4b; border: 2px dashed #ffffff; }
+        .snapshot-button { background-color: #3b3b4b; color: #ffffff; border-radius: 4px; padding: 4px 8px; }
+        .snapshot-button:hover { background-color: #4c4c5c; }
         """
         sp = Gtk.CssProvider()
         sp.load_from_data(css)
@@ -996,26 +972,49 @@ class QEMUManagerMain(Gtk.Window):
     def delete_vm(self, vm):
         dialog = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION,
                                    buttons=Gtk.ButtonsType.YES_NO, text=f"Delete '{vm['name']}'?")
-        dialog.set_secondary_text("This will permanently delete the VM's configuration and disk image. This action cannot be undone.")
+        dialog.format_secondary_text("This will permanently delete the VM's configuration, disk image, and associated files. This action cannot be undone.")
         resp = dialog.run()
         dialog.destroy()
         if resp == Gtk.ResponseType.YES:
-            try:
-                vm_path = vm["path"]
-                conf_file = os.path.join(vm_path, f"{vm['name']}.json")
-                if os.path.exists(conf_file): os.remove(conf_file)
-                if os.path.exists(vm["disk_image"]): os.remove(vm["disk_image"])
-                delete_ovmf_dir(vm)
-                tpm_dir = os.path.join(vm_path, "tpm")
-                if os.path.exists(tpm_dir): shutil.rmtree(tpm_dir)
-                index = load_vm_index()
-                if vm_path in index and not any(f.endswith(".json") for f in os.listdir(vm_path)):
-                    index.remove(vm_path)
-                    save_vm_index(index)
-                self.vm_configs = load_all_vm_configs()
-                self.refresh_vm_list()
-            except OSError as e:
-                show_detailed_error_dialog(f"Error deleting VM: {e}", str(e), self)
+            progress = ProgressDialog(self, f"Deleting {vm['name']}...")
+            def delete_thread():
+                try:
+                    vm_path = vm["path"]
+                    conf_file = os.path.join(vm_path, f"{vm['name']}.json")
+                    disk_image = vm.get("disk_image")
+                    tpm_dir = os.path.join(vm_path, "tpm")
+                    ovmf_dir = os.path.join(vm_path, "ovmf")
+                    total_steps = 4
+                    current_step = 0
+                    if os.path.exists(conf_file):
+                        os.remove(conf_file)
+                        current_step += 1
+                        GLib.idle_add(progress.update, current_step / total_steps, f"Deleted config file")
+                    if disk_image and os.path.exists(disk_image):
+                        os.remove(disk_image)
+                        current_step += 1
+                        GLib.idle_add(progress.update, current_step / total_steps, f"Deleted disk image")
+                    if os.path.exists(tpm_dir):
+                        shutil.rmtree(tpm_dir)
+                        current_step += 1
+                        GLib.idle_add(progress.update, current_step / total_steps, f"Deleted TPM directory")
+                    if os.path.exists(ovmf_dir):
+                        shutil.rmtree(ovmf_dir)
+                        current_step += 1
+                        GLib.idle_add(progress.update, current_step / total_steps, f"Deleted OVMF directory")
+                    index = load_vm_index()
+                    if vm_path in index and not any(f.endswith(".json") for f in os.listdir(vm_path) if os.path.isfile(os.path.join(vm_path, f))):
+                        index.remove(vm_path)
+                        save_vm_index(index)
+                    GLib.idle_add(self.refresh_vm_list)
+                    GLib.idle_add(show_info_dialog, "Success", f"VM '{vm['name']}' deleted successfully.", self)
+                except OSError as e:
+                    GLib.idle_add(show_detailed_error_dialog, f"Error deleting VM: {e}", str(e), self)
+                    logging.error(f"Error deleting VM {vm['name']}: {e}")
+                finally:
+                    GLib.idle_add(progress.destroy)
+            threading.Thread(target=delete_thread, daemon=True).start()
+            progress.run()
     def clone_vm(self, vm):
         clone_dialog = VMCloneDialog(self, vm)
         if clone_dialog.run() == Gtk.ResponseType.OK:
