@@ -105,18 +105,18 @@ python nqg.py
 - Animation bar is not implemented yet.
 
 
-| ToDo                                          | Status  |
-|-----------------------------------------------|---------|
-| Support Secure Boot                           | ❌      |
-| Change Virtio Display to SDL with Virtio support | ✅  |
-| Add TPM support                               | ❌      |
-| Add snapshot support                          | ❌      |
-| Add VM Name configuration                     | ✅      |
-| Add support for Debian | ❌      |
-| Add support for Fedora | ❌      |
-| Change the main window to use full space without borders | ❌  |
-| Change window name                            | ❌      |
-| Simplify text                                 | ✅      |
+| ToDo                                                                 | Status |
+|----------------------------------------------------------------------|--------|
+| Support Secure Boot & UEFI properly with correct OVMF file detection | ❌     |
+| Change Virtio Display to SDL with Virtio support                     | ✅     |
+| Add TPM support                                                      | ❌     |
+| Add snapshot support                                                 | ❌     |
+| Add VM name configuration                                            | ✅     |
+| Add support for Debian                                               | ❌     |
+| Add support for Fedora                                               | ❌     |
+| Change the main window to use full space without borders             | ❌     |
+| Change the theme to a modern material system-like theme              | ❌     |
+| Simplify text                                                        | ✅     |
 
 
 Smaller features that are not implemented yet:
