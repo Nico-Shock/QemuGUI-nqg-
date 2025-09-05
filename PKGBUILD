@@ -1,5 +1,5 @@
 pkgname=nqg
-pkgver=0.0.5
+pkgver=0.0.6
 pkgrel=1
 pkgdesc="A simple and easy-to-use QEMU GUI written in Python"
 arch=('x86_64')
@@ -8,9 +8,9 @@ depends=('python')
 makedepends=('python')
 optdepends=('qemu')
 source=("nqg.py")
-sha256sums=('568b8f857b64e009969f986e5d9bbe80c1126edeeaba61a1e12c4b8b0274c10f')
+sha256sums=('f9c2b4f6f4e821ec1ea3c23b0eb0277737df420841a63ed26e3ae967abc717ab')
 pkgver() {
-  echo "0.0.5"
+  echo "0.0.6"
 }
 
 package() {
