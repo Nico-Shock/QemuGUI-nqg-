@@ -199,6 +199,28 @@ def create_snapshot_cmd(vm, snap_name):
         logging.error(f"Failed to create snapshot '{snap_name}': {e.stderr}")
         return False, e.stderr
 
+def restore_snapshot_cmd(vm, snap_name):
+    qi = shutil.which("qemu-img")
+    if not qi:
+        return False, "qemu-img not found."
+    try:
+        subprocess.run([qi, "snapshot", "-a", snap_name, vm["disk_image"]], check=True, capture_output=True, text=True)
+        return True, f"Snapshot '{snap_name}' restored."
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to restore snapshot '{snap_name}': {e.stderr}")
+        return False, e.stderr
+
+def delete_snapshot_cmd(vm, snap_name):
+    qi = shutil.which("qemu-img")
+    if not qi:
+        return False, "qemu-img not found."
+    try:
+        subprocess.run([qi, "snapshot", "-d", snap_name, vm["disk_image"]], check=True, capture_output=True, text=True)
+        return True, f"Snapshot '{snap_name}' deleted."
+    except subprocess.CalledProcessError as e:
+        logging.error(f"Failed to delete snapshot '{snap_name}': {e.stderr}")
+        return False, e.stderr
+
 def load_vm_index():
     if os.path.exists(CONFIG_FILE) and os.path.getsize(CONFIG_FILE) > 0:
         try:
@@ -221,12 +243,11 @@ def load_all_vm_configs():
             continue
         config_found = False
         for fn in os.listdir(p):
-            if fn.endswith(".json"):
+            if fn.endswith(".json") and os.path.isfile(os.path.join(p, fn)):
                 try:
                     with open(os.path.join(p, fn)) as f:
                         configs.append(json.load(f))
                     config_found = True
-                    break
                 except (json.JSONDecodeError, KeyError):
                     logging.warning(f"Could not load or parse config in {p}")
         if config_found:
@@ -242,7 +263,7 @@ def save_vm_config(config):
 
 def show_info_dialog(message, details, parent):
     dlg = Gtk.MessageDialog(transient_for=parent, flags=0, message_type=Gtk.MessageType.INFO, buttons=Gtk.ButtonsType.OK, text=message)
-    dlg.format_secondary_text(details)
+    dlg.format_secondary_markup(details)
     dlg.run()
     dlg.destroy()
 
@@ -311,7 +332,7 @@ class ISOSelectDialog(Gtk.Window):
     def __init__(self, parent):
         super().__init__(title="Select ISO for Virtual Machine", transient_for=parent)
         self.parent = parent
-        self.set_default_size(400,300)
+        self.set_default_size(400, 300)
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_resizable(True)
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -320,12 +341,12 @@ class ISOSelectDialog(Gtk.Window):
         vbox.set_margin_start(20)
         vbox.set_margin_end(20)
         btn = Gtk.Button(label="+")
-        btn.set_size_request(150,150)
+        btn.set_size_request(150, 150)
         btn.set_tooltip_text("Select an ISO file")
         btn.connect("clicked", self.on_plus_clicked)
         vbox.pack_start(btn, False, False, 0)
         drop = Gtk.EventBox()
-        drop.set_size_request(300,150)
+        drop.set_size_request(300, 150)
         drop.get_style_context().add_class("iso-drop-area")
         drop.connect("drag-data-received", self.on_drag_received)
         drop.drag_dest_set(Gtk.DestDefaults.ALL, [], Gdk.DragAction.COPY)
@@ -338,6 +359,7 @@ class ISOSelectDialog(Gtk.Window):
         skip_btn.connect("clicked", self.on_skip_clicked)
         vbox.pack_start(skip_btn, False, False, 0)
         self.add(vbox)
+
     def on_plus_clicked(self, w):
         d = Gtk.FileChooserDialog(title="Select ISO File", parent=self,
                                   action=Gtk.FileChooserAction.OPEN)
@@ -349,10 +371,12 @@ class ISOSelectDialog(Gtk.Window):
         if d.run() == Gtk.ResponseType.OK:
             self.iso_chosen(d.get_filename())
         d.destroy()
+
     def on_drag_received(self, w, dc, x, y, data, info, time):
         uris = data.get_uris()
         if uris:
             self.iso_chosen(urllib.parse.unquote(uris[0].replace("file://", "").strip()))
+
     def on_skip_clicked(self, w):
         self.destroy()
         d = VMCreateDialog(self.parent)
@@ -361,6 +385,7 @@ class ISOSelectDialog(Gtk.Window):
             if config:
                 self.parent.add_vm(config)
         d.destroy()
+
     def iso_chosen(self, iso_path):
         self.destroy()
         d = VMCreateDialog(self.parent, iso_path)
@@ -373,7 +398,7 @@ class ISOSelectDialog(Gtk.Window):
 class VMCreateDialog(Gtk.Dialog):
     def __init__(self, parent, iso_path=None):
         super().__init__(title="New Virtual Machine Configuration", transient_for=parent)
-        self.set_default_size(500,500)
+        self.set_default_size(500, 500)
         self.set_resizable(True)
         self.iso_path = iso_path
         box = self.get_content_area()
@@ -454,6 +479,7 @@ class VMCreateDialog(Gtk.Dialog):
         self.add_button("Create", Gtk.ResponseType.OK)
         self.show_all()
         self.on_display_changed(self.combo_disp)
+
     def on_display_changed(self, combo):
         selected = combo.get_active_text().lower()
         if "gtk" in selected or "sdl" in selected:
@@ -469,6 +495,7 @@ class VMCreateDialog(Gtk.Dialog):
             self.recommend_label.set_text("Headless mode")
             self.check_3d.set_sensitive(False)
             self.check_3d.set_active(False)
+
     def on_browse(self, w):
         d = Gtk.FileChooserDialog(title="Select Folder", parent=self,
                                   action=Gtk.FileChooserAction.SELECT_FOLDER)
@@ -476,6 +503,7 @@ class VMCreateDialog(Gtk.Dialog):
         if d.run() == Gtk.ResponseType.OK:
             self.entry_path.set_text(d.get_filename())
         d.destroy()
+
     def get_vm_config(self):
         name = self.entry_name.get_text()
         if not name or re.search(r'[<>:"/\\|?*]', name):
@@ -536,7 +564,7 @@ class VMCreateDialog(Gtk.Dialog):
 class VMSettingsDialog(Gtk.Dialog):
     def __init__(self, parent, config):
         super().__init__(title="Edit Virtual Machine Settings", transient_for=parent)
-        self.set_default_size(500,450)
+        self.set_default_size(500, 450)
         self.set_resizable(True)
         self.config = config.copy()
         self.original_name = config["name"]
@@ -621,6 +649,7 @@ class VMSettingsDialog(Gtk.Dialog):
         self.on_display_changed(self.combo_disp)
         self.initial_firmware = self.config.get("firmware", "BIOS")
         self.update_iso_entry_sensitivity_settings()
+
     def on_display_changed(self, combo):
         selected = combo.get_active_text().lower()
         if "gtk" in selected or "sdl" in selected:
@@ -636,18 +665,26 @@ class VMSettingsDialog(Gtk.Dialog):
             self.recommend_label.set_text("Headless mode")
             self.check_3d.set_sensitive(False)
             self.check_3d.set_active(False)
+
     def on_iso_enabled_toggled_settings(self, check):
         self.update_iso_entry_sensitivity_settings()
+
     def update_iso_entry_sensitivity_settings(self):
         is_enabled = self.check_iso_enable.get_active()
         self.entry_iso.set_sensitive(is_enabled)
         self.btn_iso_browse.set_sensitive(is_enabled)
+
     def on_iso_browse(self, w):
         d = Gtk.FileChooserDialog(title="Select ISO File", parent=self, action=Gtk.FileChooserAction.OPEN)
         d.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
-        f = Gtk.FileFilter(); f.set_name("ISO Files"); f.add_pattern("*.iso"); d.add_filter(f)
-        if d.run() == Gtk.ResponseType.OK: self.entry_iso.set_text(d.get_filename())
+        f = Gtk.FileFilter()
+        f.set_name("ISO Files")
+        f.add_pattern("*.iso")
+        d.add_filter(f)
+        if d.run() == Gtk.ResponseType.OK:
+            self.entry_iso.set_text(d.get_filename())
         d.destroy()
+
     def get_updated_config(self):
         new_config = self.config.copy()
         new_name = self.entry_name.get_text()
@@ -666,8 +703,10 @@ class VMSettingsDialog(Gtk.Dialog):
             old_disk_image = new_config["disk_image"]
             new_disk_image = os.path.join(self.original_path, f"{new_name}.img")
             try:
-                if os.path.exists(old_conf_file): os.rename(old_conf_file, new_conf_file)
-                if os.path.exists(old_disk_image): os.rename(old_disk_image, new_disk_image)
+                if os.path.exists(old_conf_file):
+                    os.rename(old_conf_file, new_conf_file)
+                if os.path.exists(old_disk_image):
+                    os.rename(old_disk_image, new_disk_image)
                 new_config["disk_image"] = new_disk_image
             except OSError as e:
                 show_detailed_error_dialog(f"Error renaming files: {e}", str(e), self)
@@ -679,8 +718,10 @@ class VMSettingsDialog(Gtk.Dialog):
         new_config["cpu"] = self.spin_cpu.get_value_as_int()
         new_config["ram"] = ram
         new_firmware = "BIOS"
-        if self.radio_uefi.get_active(): new_firmware = "UEFI"
-        elif self.radio_secure.get_active(): new_firmware = "UEFI+Secure Boot"
+        if self.radio_uefi.get_active():
+            new_firmware = "UEFI"
+        elif self.radio_secure.get_active():
+            new_firmware = "UEFI+Secure Boot"
         new_config["firmware"] = new_firmware
         new_config["display"] = self.combo_disp.get_active_text()
         new_config["3d_acceleration"] = self.check_3d.get_active()
@@ -706,7 +747,7 @@ class VMSettingsDialog(Gtk.Dialog):
 class VMCloneDialog(Gtk.Dialog):
     def __init__(self, parent, vm_config):
         super().__init__(title="Clone Virtual Machine", transient_for=parent)
-        self.set_default_size(400,200)
+        self.set_default_size(400, 200)
         self.set_resizable(True)
         self.original_vm = vm_config
         box = self.get_content_area()
@@ -731,6 +772,7 @@ class VMCloneDialog(Gtk.Dialog):
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
         self.add_button("Clone", Gtk.ResponseType.OK)
         self.show_all()
+
     def on_browse(self, w):
         d = Gtk.FileChooserDialog(title="Select Folder", parent=self,
                                   action=Gtk.FileChooserAction.SELECT_FOLDER)
@@ -738,6 +780,7 @@ class VMCloneDialog(Gtk.Dialog):
         if d.run() == Gtk.ResponseType.OK:
             self.entry_new_path.set_text(d.get_filename())
         d.destroy()
+
     def get_clone_info(self):
         return {"new_name": self.entry_new_name.get_text(), "new_path": self.entry_new_path.get_text()}
 
@@ -770,6 +813,7 @@ class ManageSnapshotsDialog(Gtk.Dialog):
         self.add_button("Close", Gtk.ResponseType.CLOSE)
         self.refresh_list()
         self.show_all()
+
     def refresh_list(self):
         for child in self.list_current.get_children():
             self.list_current.remove(child)
@@ -797,6 +841,7 @@ class ManageSnapshotsDialog(Gtk.Dialog):
             row.add(hbox)
             self.list_current.add(row)
         self.list_current.show_all()
+
     def handle_operation(self, operation_func, *args):
         progress = ProgressDialog(self, "Processing Snapshot...")
         def task_thread():
@@ -817,28 +862,32 @@ class ManageSnapshotsDialog(Gtk.Dialog):
                 GLib.idle_add(show_detailed_error_dialog, "Snapshot Operation Failed", message, self)
         threading.Thread(target=task_thread, daemon=True).start()
         progress.run()
+
     def on_create(self, button):
         snap_name = self.create_entry.get_text().strip()
         if snap_name:
             self.handle_operation(create_snapshot_cmd, self.vm, snap_name)
             self.create_entry.set_text("")
+
     def on_restore_clicked(self, button, snap):
-        self.handle_operation(lambda vm, s: restore_snapshot_cmd(vm, s), self.vm, snap)
+        self.handle_operation(restore_snapshot_cmd, self.vm, snap)
+
     def on_delete_clicked(self, button, snap):
         d = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text=f"Delete snapshot '{snap}'?")
         if d.run() == Gtk.ResponseType.YES:
-            self.handle_operation(lambda vm, s: delete_snapshot_cmd(vm, s), self.vm, snap)
+            self.handle_operation(delete_snapshot_cmd, self.vm, snap)
         d.destroy()
 
 class QEMUManagerMain(Gtk.Window):
     def __init__(self):
         super().__init__(title="Nicos Qemu GUI")
-        self.set_default_size(1000,700)
+        self.set_default_size(1000, 700)
         self.set_resizable(True)
         self.vm_processes = {}
         self.vm_configs = load_all_vm_configs()
         self.build_ui()
         self.apply_css()
+
     def build_ui(self):
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         vbox.set_margin_top(0)
@@ -859,6 +908,7 @@ class QEMUManagerMain(Gtk.Window):
         vbox.pack_start(scrolled, True, True, 0)
         self.add(vbox)
         self.refresh_vm_list()
+
     def apply_css(self):
         css = b"""
         window { background-color: #1e1e2e; }
@@ -871,9 +921,11 @@ class QEMUManagerMain(Gtk.Window):
         sp = Gtk.CssProvider()
         sp.load_from_data(css)
         Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), sp, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+
     def on_add_vm(self, w):
         d = ISOSelectDialog(self)
         d.show_all()
+
     def add_vm(self, config):
         if config is None:
             return
@@ -884,6 +936,7 @@ class QEMUManagerMain(Gtk.Window):
             save_vm_index(index)
         self.vm_configs = load_all_vm_configs()
         self.refresh_vm_list()
+
     def refresh_vm_list(self):
         for row in self.listbox.get_children():
             self.listbox.remove(row)
@@ -892,6 +945,7 @@ class QEMUManagerMain(Gtk.Window):
             row = self.create_vm_row(vm)
             self.listbox.add(row)
         self.listbox.show_all()
+
     def create_vm_row(self, vm):
         row = Gtk.ListBoxRow()
         event_box = Gtk.EventBox()
@@ -919,6 +973,7 @@ class QEMUManagerMain(Gtk.Window):
         event_box.connect("button-press-event", self.on_vm_item_event, vm)
         row.add(event_box)
         return row
+
     def on_vm_item_event(self, widget, event, vm):
         if event.type == Gdk.EventType._2BUTTON_PRESS and event.button == 1:
             self.start_vm(vm)
@@ -928,6 +983,7 @@ class QEMUManagerMain(Gtk.Window):
             menu.popup_at_pointer(event)
             return True
         return False
+
     def create_context_menu(self, vm):
         menu = Gtk.Menu()
         items = {"Start": self.start_vm, "Edit": self.edit_vm,
@@ -939,6 +995,7 @@ class QEMUManagerMain(Gtk.Window):
             menu.append(item)
         menu.show_all()
         return menu
+
     def open_manage_snapshots(self, vm):
         if vm.get("disk_type") != "qcow2":
             show_detailed_error_dialog("Snapshots not supported", "Snapshots are only available for 'qcow2' disk images.", self)
@@ -946,6 +1003,7 @@ class QEMUManagerMain(Gtk.Window):
         dlg = ManageSnapshotsDialog(self, vm)
         dlg.run()
         dlg.destroy()
+
     def start_vm(self, vm):
         if not vm.get("launch_cmd"):
             show_detailed_error_dialog("No start command!", "Launch command is missing or invalid. Please check VM settings.", self)
@@ -960,6 +1018,7 @@ class QEMUManagerMain(Gtk.Window):
         except (OSError, FileNotFoundError) as e:
             show_detailed_error_dialog(f"Error starting Virtual Machine: {e}", str(e), self)
             logging.error(f"Error starting VM {vm['name']}: {e}")
+
     def edit_vm(self, vm):
         dialog = VMSettingsDialog(self, vm)
         if dialog.run() == Gtk.ResponseType.OK:
@@ -969,52 +1028,43 @@ class QEMUManagerMain(Gtk.Window):
                 self.vm_configs = load_all_vm_configs()
                 self.refresh_vm_list()
         dialog.destroy()
+
     def delete_vm(self, vm):
-        dialog = Gtk.MessageDialog(transient_for=self, flags=0, message_type=Gtk.MessageType.QUESTION,
-                                   buttons=Gtk.ButtonsType.YES_NO, text=f"Delete '{vm['name']}'?")
-        dialog.format_secondary_text("This will permanently delete the VM's configuration, disk image, and associated files. This action cannot be undone.")
-        resp = dialog.run()
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f"Delete '{vm['name']}'?"
+        )
+        dialog.format_secondary_markup("This will permanently delete the VM's configuration, disk image, and associated files. This action cannot be undone.")
+        response = dialog.run()
         dialog.destroy()
-        if resp == Gtk.ResponseType.YES:
-            progress = ProgressDialog(self, f"Deleting {vm['name']}...")
-            def delete_thread():
-                try:
-                    vm_path = vm["path"]
-                    conf_file = os.path.join(vm_path, f"{vm['name']}.json")
-                    disk_image = vm.get("disk_image")
-                    tpm_dir = os.path.join(vm_path, "tpm")
-                    ovmf_dir = os.path.join(vm_path, "ovmf")
-                    total_steps = 4
-                    current_step = 0
-                    if os.path.exists(conf_file):
-                        os.remove(conf_file)
-                        current_step += 1
-                        GLib.idle_add(progress.update, current_step / total_steps, f"Deleted config file")
-                    if disk_image and os.path.exists(disk_image):
-                        os.remove(disk_image)
-                        current_step += 1
-                        GLib.idle_add(progress.update, current_step / total_steps, f"Deleted disk image")
-                    if os.path.exists(tpm_dir):
-                        shutil.rmtree(tpm_dir)
-                        current_step += 1
-                        GLib.idle_add(progress.update, current_step / total_steps, f"Deleted TPM directory")
-                    if os.path.exists(ovmf_dir):
-                        shutil.rmtree(ovmf_dir)
-                        current_step += 1
-                        GLib.idle_add(progress.update, current_step / total_steps, f"Deleted OVMF directory")
-                    index = load_vm_index()
-                    if vm_path in index and not any(f.endswith(".json") for f in os.listdir(vm_path) if os.path.isfile(os.path.join(vm_path, f))):
-                        index.remove(vm_path)
-                        save_vm_index(index)
-                    GLib.idle_add(self.refresh_vm_list)
-                    GLib.idle_add(show_info_dialog, "Success", f"VM '{vm['name']}' deleted successfully.", self)
-                except OSError as e:
-                    GLib.idle_add(show_detailed_error_dialog, f"Error deleting VM: {e}", str(e), self)
-                    logging.error(f"Error deleting VM {vm['name']}: {e}")
-                finally:
-                    GLib.idle_add(progress.destroy)
-            threading.Thread(target=delete_thread, daemon=True).start()
-            progress.run()
+        if response != Gtk.ResponseType.YES:
+            return
+
+        progress = ProgressDialog(self, f"Deleting {vm['name']}...")
+        def delete_thread():
+            try:
+                vm_path = vm["path"]
+                if os.path.exists(vm_path):
+                    shutil.rmtree(vm_path)  # Löscht den gesamten VM-Ordner
+                    GLib.idle_add(progress.update, 0.5, "Deleted VM directory")
+                index = load_vm_index()
+                if vm_path in index:
+                    index.remove(vm_path)
+                    save_vm_index(index)
+                GLib.idle_add(progress.update, 1.0, "Updated VM index")
+                self.vm_configs = load_all_vm_configs()  # Aktualisiert die Konfigurationsliste
+                GLib.idle_add(self.refresh_vm_list)  # Aktualisiert die UI-Liste sofort
+            except OSError as e:
+                GLib.idle_add(show_detailed_error_dialog, f"Error deleting VM: {e}", str(e), self)
+                logging.error(f"Error deleting VM {vm['name']}: {e}")
+            finally:
+                GLib.idle_add(progress.destroy)
+        threading.Thread(target=delete_thread, daemon=True).start()
+        progress.run()
+
     def clone_vm(self, vm):
         clone_dialog = VMCloneDialog(self, vm)
         if clone_dialog.run() == Gtk.ResponseType.OK:
@@ -1048,7 +1098,8 @@ class QEMUManagerMain(Gtk.Window):
                     with open(vm["disk_image"], 'rb') as fsrc, open(new_vm_config["disk_image"], 'wb') as fdst:
                         while True:
                             buf = fsrc.read(4 * 1024 * 1024)
-                            if not buf: break
+                            if not buf:
+                                break
                             fdst.write(buf)
                             copied += len(buf)
                             fraction = copied / source_size
