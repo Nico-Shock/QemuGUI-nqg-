@@ -98,8 +98,7 @@ python nqg.py
 
 ## Known issues:
 
-- Sometimes UEFI files won’t copy correctly.
-- Auto installation and setups for UEFI files currently only work properly on Arch based systems.
+- UEFI files won’t copy correctly.
 - Only OVMF from Fedora works with Secure Boot, but it is not working on other OSes for now (though it is possible).
 - Animation bar is not implemented yet.
 
@@ -117,6 +116,5 @@ python nqg.py
 
 Smaller features that are not implemented yet:
 - Fixes to the Graphics API screen; for example, the QEMU default screen is used for SDL.  
-- Greyouts for misconfigured or unsupported graphics APIs.  
 - Feature to double click a list item in the GUI to jump directly to the correct VM window.
 - A fluent animation bar with a centered percentage display above it for operations like cloning or managing snapshots.
