@@ -105,15 +105,16 @@ python nqg.py
 - The display managers are not all working correctly and are sometimes buggy with the settings.
 
 
-| ToDo                                                                 | Status |
-|----------------------------------------------------------------------|--------|
-| Support Secure Boot & UEFI properly with correct OVMF file detection | ❌     |
-| Add TPM support                                                      | ❌     |
-| Add snapshot support                                                 | ✔️     |
-| Add support for Debian                                               | ✔️     |
-| Add support for Fedora                                               | ✔️     |
-| Change the main window to use full space without borders             | ✔️     |
-| Change the theme to a modern material system-like theme              | ✔️     |
+| ToDo                                                                  | Status |
+|-----------------------------------------------------------------------|--------|
+| Support Secure Boot & UEFI properly with correct OVMF file detection  | ❌     |
+| Add TPM support                                                       | ❌     |
+| Add snapshot support                                                  | ✔️     |
+| Add support for Debian                                                | ✔️     |
+| Add support for Fedora                                                | ✔️     |
+| Change the main window to use full space without borders              | ✔️     |
+| Change the theme to a modern Material System-like theme               | ✔️     |
+| Correctly make every display manager work with the correct settings   | ✔️     |
 
 
 Smaller features that are not implemented yet:
