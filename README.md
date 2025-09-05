@@ -101,6 +101,8 @@ python nqg.py
 - UEFI files won’t copy correctly.
 - Only OVMF from Fedora works with Secure Boot, but it is not working on other OSes for now (though it is possible).
 - Animation bar is not implemented yet.
+- Snapshot prompts are missing, the same as proper name detection of what is allowed.
+- The display managers are not all working correctly and are sometimes buggy with the settings.
 
 
 | ToDo                                                                 | Status |
