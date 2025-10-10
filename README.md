@@ -60,6 +60,10 @@ You should use this program if you want to manage virtual machines with QEMU KVM
 sudo pacman -S edk2-ovmf python qemu-full
 ```
 
+```
+yay -S swtpm
+```
+
 ## How to install on Arch-based Systems:
 
 First, clone the repo:
