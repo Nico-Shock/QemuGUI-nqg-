@@ -10,5 +10,5 @@ source=("nqg.py")
 sha256sums=('c3bf06aeb8aee7e5073128c8d4fcfccdcf834dad569431a6d51e53b68d9cc0d9')
 
 package() {
-    install -Dm755 "$srcdir/nqg.py" "$pkgdir/usr/bin/nqgpkg"
+    install -Dm755 "$srcdir/nqg.py" "$pkgdir/usr/bin/nqg"
 }
