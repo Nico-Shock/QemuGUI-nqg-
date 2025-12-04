@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import os
 import json
 import subprocess
@@ -19,16 +18,20 @@ def find_ovmf_source_dir():
         "/usr/share/edk2-ovmf/x64",
         "/usr/share/edk2-ovmf",
         "/usr/share/edk2/ovmf",
+        "/usr/share/edk2/x64",
         "/usr/share/OVMF",
         "/usr/share/ovmf",
         "/usr/share/qemu",
         "/usr/share/edk2"
     ]
+    patterns = [r"^OVMF", r"OVMF_CODE", r"OVMF_VARS", r"secboot", r"secureboot", r"4m\.fd"]
     for d in candidates:
         if os.path.isdir(d):
             files = os.listdir(d)
-            if any(f.startswith("OVMF_CODE") for f in files) or any(f.endswith(".secboot.fd") for f in files):
-                return d
+            for f in files:
+                for p in patterns:
+                    if re.search(p, f, re.IGNORECASE):
+                        return d
     return None
 
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".nqg")
@@ -58,40 +61,84 @@ def copy_uefi_files(config, parent_window=None):
     os.makedirs(ovmf_dir, exist_ok=True)
     src_dir = find_ovmf_source_dir()
     if not src_dir:
-        GLib.idle_add(show_detailed_error_dialog, "OVMF folder not found.", "No valid OVMF source directory detected. Please install 'edk2-ovmf'.", parent_window)
+        GLib.idle_add(show_detailed_error_dialog, "OVMF folder not found.", "No valid OVMF source directory detected. Please install 'edk2-ovmf' or 'edk2'.", parent_window)
         return False
 
-    firmware = config.get("firmware", "")
-    files_to_copy = {
-        "UEFI": {"OVMF_CODE.fd": "OVMF_CODE.fd", "OVMF_VARS.fd": "OVMF_VARS.fd"},
-        "UEFI+Secure Boot": {"OVMF_CODE.secboot.fd": "OVMF_CODE.fd", "OVMF_VARS.fd": "OVMF_VARS.fd"}
-    }
+    files = os.listdir(src_dir)
+    code_candidates = []
+    vars_candidates = []
+    secboot_code_candidates = []
+    for f in files:
+        lf = f.lower()
+        if "ovmf" in lf:
+            if "vars" in lf:
+                vars_candidates.append(f)
+            elif "secboot" in lf or "secure" in lf:
+                secboot_code_candidates.append(f)
+            elif "code" in lf or lf.endswith(".4m.fd") or lf.endswith(".fd") or lf.startswith("ovmf.") or lf.startswith("ovmf_code"):
+                code_candidates.append(f)
 
-    selected_files = files_to_copy.get(firmware, {})
-    for src_name, dst_name in selected_files.items():
-        src = os.path.join(src_dir, src_name)
-        dst = os.path.join(ovmf_dir, dst_name)
-        if os.path.exists(src):
-            try:
-                shutil.copy(src, dst)
-                logging.info(f"Copied {src} to {dst}")
-            except Exception as e:
-                logging.error(f"Copy failed {src} to {dst}: {e}")
-                GLib.idle_add(show_detailed_error_dialog, f"Failed to copy UEFI file: {src_name}", str(e), parent_window)
-                return False
+    def choose_first(list_of_names):
+        return list_of_names[0] if list_of_names else None
+
+    chosen_code = choose_first(code_candidates)
+    chosen_vars = choose_first(vars_candidates)
+    chosen_secboot = choose_first(secboot_code_candidates)
+
+    firmware = config.get("firmware", "")
+    code_src_name = None
+    vars_src_name = None
+
+    if firmware == "UEFI+Secure Boot":
+        if chosen_secboot:
+            code_src_name = chosen_secboot
+        elif chosen_code:
+            code_src_name = chosen_code
         else:
-            logging.warning(f"Source file {src} does not exist.")
-            GLib.idle_add(show_detailed_error_dialog, "UEFI source file not found.", f"File not found: {src}", parent_window)
-            return False
+            code_src_name = None
+        vars_src_name = chosen_vars
+    else:
+        if chosen_code:
+            code_src_name = chosen_code
+        else:
+            if chosen_secboot:
+                code_src_name = chosen_secboot
+        vars_src_name = chosen_vars
+
+    if not code_src_name or not vars_src_name:
+        available = "\n".join(files)
+        GLib.idle_add(show_detailed_error_dialog, "UEFI source files not found.", f"Could not locate suitable OVMF CODE and VARS files in {src_dir}. Available files:\n{available}", parent_window)
+        return False
+
+    dst_code = os.path.join(ovmf_dir, os.path.basename(code_src_name))
+    dst_vars = os.path.join(ovmf_dir, os.path.basename(vars_src_name))
+    src_code = os.path.join(src_dir, code_src_name)
+    src_vars = os.path.join(src_dir, vars_src_name)
+
+    try:
+        shutil.copy(src_code, dst_code)
+        logging.info(f"Copied {src_code} to {dst_code}")
+    except Exception as e:
+        logging.error(f"Copy failed {src_code} to {dst_code}: {e}")
+        GLib.idle_add(show_detailed_error_dialog, f"Failed to copy UEFI code file: {code_src_name}", str(e), parent_window)
+        return False
+
+    try:
+        shutil.copy(src_vars, dst_vars)
+        logging.info(f"Copied {src_vars} to {dst_vars}")
+    except Exception as e:
+        logging.error(f"Copy failed {src_vars} to {dst_vars}: {e}")
+        GLib.idle_add(show_detailed_error_dialog, f"Failed to copy UEFI vars file: {vars_src_name}", str(e), parent_window)
+        return False
 
     if firmware == "UEFI":
-        config["ovmf_code"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
-        config["ovmf_vars"] = os.path.join(ovmf_dir, "OVMF_VARS.fd")
+        config["ovmf_code"] = dst_code
+        config["ovmf_vars"] = dst_vars
         config.pop("ovmf_code_secure", None)
         config.pop("ovmf_vars_secure", None)
     elif firmware == "UEFI+Secure Boot":
-        config["ovmf_code_secure"] = os.path.join(ovmf_dir, "OVMF_CODE.fd")
-        config["ovmf_vars_secure"] = os.path.join(ovmf_dir, "OVMF_VARS.fd")
+        config["ovmf_code_secure"] = dst_code
+        config["ovmf_vars_secure"] = dst_vars
         config.pop("ovmf_code", None)
         config.pop("ovmf_vars", None)
 
@@ -1048,15 +1095,15 @@ class QEMUManagerMain(Gtk.Window):
             try:
                 vm_path = vm["path"]
                 if os.path.exists(vm_path):
-                    shutil.rmtree(vm_path)  # Löscht den gesamten VM-Ordner
+                    shutil.rmtree(vm_path)
                     GLib.idle_add(progress.update, 0.5, "Deleted VM directory")
                 index = load_vm_index()
                 if vm_path in index:
                     index.remove(vm_path)
                     save_vm_index(index)
                 GLib.idle_add(progress.update, 1.0, "Updated VM index")
-                self.vm_configs = load_all_vm_configs()  # Aktualisiert die Konfigurationsliste
-                GLib.idle_add(self.refresh_vm_list)  # Aktualisiert die UI-Liste sofort
+                self.vm_configs = load_all_vm_configs()
+                GLib.idle_add(self.refresh_vm_list)
             except OSError as e:
                 GLib.idle_add(show_detailed_error_dialog, f"Error deleting VM: {e}", str(e), self)
                 logging.error(f"Error deleting VM {vm['name']}: {e}")
