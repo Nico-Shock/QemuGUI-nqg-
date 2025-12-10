@@ -112,7 +112,7 @@ python nqg.py
 | ToDo                                                                  | Status |
 |-----------------------------------------------------------------------|--------|
 | Support Secure Boot & UEFI properly with correct OVMF file detection  | ❌     |
-| Add TPM support                                                       | ❌     |
+| Add TPM support                                                       | ✔️     |
 | Add snapshot support                                                  | ✔️     |
 | Add support for Debian                                                | ✔️     |
 | Add support for Fedora                                                | ✔️     |
